@@ -40,6 +40,13 @@ CREATE TABLE IF NOT EXISTS ygo_cards (
 );
 CREATE INDEX IF NOT EXISTS idx_ygo_name_tc ON ygo_cards(name_tc);
 CREATE INDEX IF NOT EXISTS idx_ygo_name_jp ON ygo_cards(name_jp);
+
+-- 露天賣家暱稱快取（數字 ID → 賣場暱稱，從商品頁解析）
+CREATE TABLE IF NOT EXISTS ruten_sellers (
+    seller_id TEXT PRIMARY KEY,
+    nick      TEXT,
+    name      TEXT   -- 賣場名稱（boardName）
+);
 """
 
 

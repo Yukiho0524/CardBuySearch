@@ -3,6 +3,7 @@
 使用露天前端網頁本身呼叫的公開 JSON API（rtapi.ruten.com.tw）。
 注意：此為非官方介面，露天改版即失效；請控制請求頻率避免被封鎖。
 """
+import json
 import re
 import time
 
@@ -212,6 +213,43 @@ def find_listings_for_ygo(names, rarity=None, lang=None, limit=40):
             continue
         results.append(_listing_dict(p, confidence))
     return results
+
+
+NICK_RE = re.compile(r'"nick":"([^"]+)"')
+BOARD_NAME_RE = re.compile(r'"boardName":"([^"]*)"')
+
+
+def resolve_seller(conn, seller_id, sample_prod_id):
+    """賣家數字 ID → 賣場暱稱（露天無公開 API，從該賣家任一商品頁解析後快取）。
+
+    回傳 {nick, name}；解析失敗回傳 None 並快取空值避免重複嘗試。
+    """
+    row = conn.execute(
+        "SELECT nick, name FROM ruten_sellers WHERE seller_id=?",
+        (str(seller_id),)).fetchone()
+    if row:
+        return {"nick": row["nick"], "name": row["name"]} if row["nick"] else None
+    nick = name = None
+    try:
+        r = session.get(
+            f"https://www.ruten.com.tw/item/{sample_prod_id}/", timeout=15)
+        if r.ok:
+            m = NICK_RE.search(r.text)
+            nick = m.group(1) if m else None
+            m = BOARD_NAME_RE.search(r.text)
+            if m:
+                try:  # 內容是 JSON 字串（含 \uXXXX 轉義）
+                    name = json.loads(f'"{m.group(1)}"')
+                except ValueError:
+                    name = None
+    except Exception:
+        pass
+    conn.execute(
+        "INSERT OR REPLACE INTO ruten_sellers VALUES (?,?,?)",
+        (str(seller_id), nick, name))
+    conn.commit()
+    time.sleep(DELAY)
+    return {"nick": nick, "name": name} if nick else None
 
 
 def _listing_dict(p, confidence):

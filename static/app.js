@@ -189,7 +189,9 @@ function renderCompare(data) {
       </tr>`).join("");
     div.innerHTML = `
       <div class="seller-head">
-        <span>賣家 <a href="https://www.ruten.com.tw/store/${s.seller_id}" target="_blank" rel="noopener">#${s.seller_id}</a></span>
+        <span>賣家 ${s.store_url
+          ? `<a href="${s.store_url}" target="_blank" rel="noopener">${s.seller_name || s.seller_nick}</a>`
+          : `#${s.seller_id}（<a href="${s.covered[0].listing.url}" target="_blank" rel="noopener">看商品頁</a>）`}</span>
         <span class="cov ${covClass}">${s.complete ? "✅ 全齊" : `覆蓋 ${s.covered_count}/${s.total_count} 張`}</span>
         <span class="price">${fmt(s.total)} <small>（卡 ${fmt(s.subtotal)} + 運 ${fmt(s.shipping)}）</small></span>
       </div>

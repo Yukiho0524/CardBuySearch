@@ -12,7 +12,7 @@ from opencc import OpenCC
 
 from db import get_conn
 from ruten import (YGO_LANGS, YGO_RARITIES, find_listings_for_card,
-                   find_listings_for_ygo)
+                   find_listings_for_ygo, resolve_seller)
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 
@@ -205,6 +205,16 @@ def api_compare():
         })
     # 排序：湊齊優先 → 覆蓋數多 → 總價低
     seller_results.sort(key=lambda s: (-s["covered_count"], s["total"]))
+
+    # 前幾名賣家補上賣場暱稱（從商品頁解析，結果有快取）
+    conn = get_conn()
+    for s in seller_results[:8]:
+        info = resolve_seller(conn, s["seller_id"], s["covered"][0]["listing"]["prod_id"])
+        if info:
+            s["seller_nick"] = info["nick"]
+            s["seller_name"] = info["name"]
+            s["store_url"] = f"https://www.ruten.com.tw/store/{info['nick']}/"
+    conn.close()
 
     # 跨賣家拆買基準：每張卡取全站最便宜，運費按涉及的賣家各計一次
     split_items, split_sellers = [], {}
