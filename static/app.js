@@ -103,7 +103,9 @@ function cardEl(c) {
     </div>
     <button ${inList ? "disabled" : ""}>${inList ? "已加入" : "＋ 加入清單"}</button>`;
   div.querySelector("button").addEventListener("click", (e) => {
-    wishlist.set(keyOf(c), { card: c, qty: 1, rarity: "", lang: "" });
+    // 遊戲王預設日紙（台灣玩家主流），可在清單改成韓紙/英紙/不限
+    wishlist.set(keyOf(c), { card: c, qty: 1, rarity: "",
+                             lang: c.game === "ygo" ? "日紙" : "" });
     e.target.disabled = true;
     e.target.textContent = "已加入";
     renderWishlist();

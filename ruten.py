@@ -60,14 +60,19 @@ YGO_RARITIES = {
     "PSER": ["PSER", "白鑽"],
 }
 
-# 紙種（發行語言）：標籤 → 標題常見寫法；卡號中的 -JP/-KR 另以 regex 判斷
+# 紙種（發行語言）：標籤 → 標題常見寫法；卡號中的 -JP/-KR/-EN 另以 regex 判斷
+# 「英紙」含美版/亞英：選日紙或韓紙時，寫明美英版的商品會被排除
 YGO_LANGS = {
     "日紙": ["日紙", "日版", "日文", "日字", "JP"],
     "韓紙": ["韓紙", "韓版", "韓文", "韓字", "KR"],
+    "英紙": ["英紙", "美版", "英版", "英文", "美英", "亞英", "EN"],
+    "簡中": ["簡中", "简中", "簡體", "简体", "簡版", "SC"],
 }
 YGO_LANG_CODE_RE = {
     "日紙": re.compile(r"-JP[A-Z]?\d+", re.I),   # 如 PAC1-JP016、TT01-JPB11
     "韓紙": re.compile(r"-KR[A-Z]?\d+", re.I),
+    "英紙": re.compile(r"-(EN|AE)[A-Z]?\d+", re.I),  # 如 MP19-EN137、DI02-AE011
+    "簡中": re.compile(r"-SC[A-Z]?\d+", re.I),
 }
 
 # 明顯不是單卡的商品（套組、代抓、福袋等）
@@ -185,12 +190,18 @@ def title_matches_ygo(title, names, rarity=None, lang=None):
         else:
             unknown += 1
     if lang:
-        def lang_hit(lbl):
-            return hit(YGO_LANGS[lbl]) or bool(YGO_LANG_CODE_RE[lbl].search(title))
-        if lang_hit(lang):
+        # 字面聲明優先於卡號推斷：韓版卡常被標日版卡號（如「韓紙 LOCH-JP016」）
+        word_hits = {lbl: hit(als) for lbl, als in YGO_LANGS.items()}
+        code_hits = {lbl: bool(rx.search(title))
+                     for lbl, rx in YGO_LANG_CODE_RE.items()}
+        if word_hits[lang]:
             pass
-        elif any(lang_hit(lbl) for lbl in YGO_LANGS if lbl != lang):
-            return None  # 標題寫了別的紙種
+        elif any(word_hits[l] for l in YGO_LANGS if l != lang):
+            return None  # 標題明寫了別的紙種
+        elif code_hits.get(lang):
+            pass
+        elif any(code_hits.values()):
+            return None  # 卡號屬於別的語言版本
         else:
             unknown += 1
     if unknown == 0:
