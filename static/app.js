@@ -58,6 +58,33 @@ async function doSearch() {
 $("#searchBtn").addEventListener("click", doSearch);
 $("#searchInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
 
+// ---------- 以圖搜卡 ----------
+$("#imgSearchBtn").addEventListener("click", () => $("#imgInput").click());
+$("#imgInput").addEventListener("change", async (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+  const grid = $("#searchResults");
+  grid.innerHTML = '<p class="empty"><span class="spinner"></span>比對圖片中…</p>';
+  const fd = new FormData();
+  fd.append("image", file);
+  fd.append("game", currentGame());
+  try {
+    const res = await fetch("/api/search-by-image", { method: "POST", body: fd });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    grid.innerHTML = "";
+    if (!data.cards.length) {
+      grid.innerHTML = '<p class="empty">找不到相近的卡。</p>';
+      return;
+    }
+    for (const c of data.cards) grid.appendChild(cardEl(c));
+  } catch (err) {
+    grid.innerHTML = `<p class="empty">圖片搜尋失敗：${err.message}</p>`;
+  } finally {
+    e.target.value = "";
+  }
+});
+
 function keyOf(c) { return `${c.game}:${c.id}`; }
 
 function cardEl(c) {

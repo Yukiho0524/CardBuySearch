@@ -14,6 +14,7 @@
 """
 import argparse
 import re
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -156,14 +157,22 @@ def crawl_details(conn, limit=None, ids=None):
             print(f"  [{card_id}] 失敗：{e}")
             time.sleep(DELAY * 3)
             continue
-        conn.execute(
-            "UPDATE cards SET name=?, evolve_marker=?, set_alpha=?, set_mark=?, "
-            "collector_number=?, image_url=?, detail_fetched=1 WHERE id=?",
-            (d.get("name"), d.get("evolve_marker"), d.get("set_alpha"),
-             d.get("set_mark"), d.get("collector_number"), d.get("image_url"),
-             card_id),
-        )
-        conn.commit()
+        for attempt in (1, 2, 3):  # 與其他爬蟲共用 DB，鎖定時重試而非中斷長跑任務
+            try:
+                conn.execute(
+                    "UPDATE cards SET name=?, evolve_marker=?, set_alpha=?, set_mark=?, "
+                    "collector_number=?, image_url=?, detail_fetched=1 WHERE id=?",
+                    (d.get("name"), d.get("evolve_marker"), d.get("set_alpha"),
+                     d.get("set_mark"), d.get("collector_number"), d.get("image_url"),
+                     card_id),
+                )
+                conn.commit()
+                break
+            except sqlite3.OperationalError as e:
+                if attempt == 3:
+                    print(f"  [{card_id}] DB 寫入失敗（{e}），略過（下次續跑會補）")
+                else:
+                    time.sleep(5 * attempt)
         print(f"  [{n}/{len(todo)}] {d.get('name')} {d.get('collector_number')} (id={card_id})")
         time.sleep(DELAY)
 

@@ -47,6 +47,15 @@ CREATE TABLE IF NOT EXISTS ruten_sellers (
     nick      TEXT,
     name      TEXT   -- 賣場名稱（boardName）
 );
+
+-- 卡圖感知雜湊索引（圖片搜尋用）
+CREATE TABLE IF NOT EXISTS image_hashes (
+    game    TEXT NOT NULL,       -- pkm / ygo
+    card_id INTEGER NOT NULL,
+    phash   TEXT NOT NULL,       -- 64-bit pHash（hex）
+    dhash   TEXT NOT NULL,       -- 64-bit dHash（hex）
+    PRIMARY KEY (game, card_id)
+);
 """
 
 

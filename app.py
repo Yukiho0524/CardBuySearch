@@ -99,6 +99,63 @@ def api_search():
     return jsonify({"cards": cards})
 
 
+@app.post("/api/search-by-image")
+def api_search_by_image():
+    """圖片搜尋：上傳卡片照片，以感知雜湊找最相近的卡。
+
+    照片請盡量裁切到只剩卡片本體；回傳前 12 名（距離越小越像）。
+    """
+    import io as _io
+
+    import imagehash
+    from PIL import Image
+
+    f = request.files.get("image")
+    game = request.form.get("game", "pkm")
+    if not f:
+        return jsonify({"error": "缺少圖片"}), 400
+    try:
+        img = Image.open(_io.BytesIO(f.read())).convert("RGB")
+    except Exception:
+        return jsonify({"error": "無法讀取圖片"}), 400
+    q_ph = imagehash.phash(img)
+    q_dh = imagehash.dhash(img)
+
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT card_id, phash, dhash FROM image_hashes WHERE game=?",
+        (game,)).fetchall()
+    if not rows:
+        conn.close()
+        return jsonify({"error": "此遊戲的圖片索引尚未建立，請先跑 crawler/imghash.py"}), 400
+    scored = []
+    for r in rows:
+        d = int(q_ph - imagehash.hex_to_hash(r["phash"])) \
+            + int(q_dh - imagehash.hex_to_hash(r["dhash"]))
+        scored.append((d, r["card_id"]))
+    scored.sort()
+    top = scored[:12]
+
+    cards = []
+    for d, cid in top:
+        if game == "ygo":
+            row = conn.execute("SELECT * FROM ygo_cards WHERE id=?", (cid,)).fetchone()
+            if row:
+                cards.append({
+                    "id": row["id"], "game": "ygo", "name": row["name_tc"],
+                    "name_jp": row["name_jp"], "collector_number": None,
+                    "rarity": None, "image_url": f"/img/ygo/{row['id']}",
+                    "distance": d,
+                })
+        else:
+            row = conn.execute("SELECT * FROM cards WHERE id=?", (cid,)).fetchone()
+            if row:
+                cards.append({**dict(row), "game": "pkm",
+                              "image_url": f"/img/pkm/{row['id']}", "distance": d})
+    conn.close()
+    return jsonify({"cards": cards})
+
+
 @app.get("/api/ygo/options")
 def api_ygo_options():
     """遊戲王願望清單可選的稀有度與紙種。"""
