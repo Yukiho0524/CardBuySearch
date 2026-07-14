@@ -3,13 +3,18 @@
 啟動：python app.py  →  http://localhost:5000
 """
 from collections import defaultdict
+from pathlib import Path
 
-from flask import Flask, jsonify, request, send_from_directory
+import requests as _requests
+from flask import Flask, abort, jsonify, request, send_from_directory
 
 from db import get_conn
 from ruten import find_listings_for_card
 
 app = Flask(__name__, static_folder="static", static_url_path="")
+
+IMG_CACHE = Path(__file__).parent / "data" / "img_cache"
+YGO_IMG_URL = "https://images.ygoprodeck.com/images/cards/{id}.jpg"
 
 CONFIDENCE_ORDER = {"strong": 0, "weak": 1, "maybe": 2}
 
@@ -17,6 +22,37 @@ CONFIDENCE_ORDER = {"strong": 0, "weak": 1, "maybe": 2}
 @app.get("/")
 def index():
     return send_from_directory("static", "index.html")
+
+
+@app.get("/img/<game>/<int:card_id>")
+def img_proxy(game, card_id):
+    """卡圖代理＋磁碟快取。官方圖伺服器對瀏覽器跨站請求會停滯，改由後端抓取後供應同源圖片。"""
+    if game not in ("pkm", "ygo"):
+        abort(404)
+    ext = "png" if game == "pkm" else "jpg"
+    cache = IMG_CACHE / game / f"{card_id}.{ext}"
+    if not cache.exists():
+        if game == "pkm":
+            conn = get_conn()
+            row = conn.execute(
+                "SELECT image_url FROM cards WHERE id=?", (card_id,)).fetchone()
+            conn.close()
+            if not row or not row["image_url"]:
+                abort(404)
+            url = row["image_url"]
+        else:
+            url = YGO_IMG_URL.format(id=card_id)
+        try:
+            r = _requests.get(url, timeout=20, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            r.raise_for_status()
+        except Exception:
+            abort(502)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_bytes(r.content)
+    resp = send_from_directory(cache.parent, cache.name)
+    resp.headers["Cache-Control"] = "public, max-age=604800"
+    return resp
 
 
 @app.get("/api/search")
@@ -38,6 +74,9 @@ def api_search():
     sql += " ORDER BY id DESC LIMIT 60"
     rows = [dict(r) for r in conn.execute(sql, params)]
     conn.close()
+    for r in rows:
+        r["image_url"] = f"/img/pkm/{r['id']}"
+        r["game"] = "pkm"
     return jsonify({"cards": rows})
 
 
@@ -143,8 +182,9 @@ def api_compare():
     split_shipping = sum(split_sellers.values())
 
     return jsonify({
-        "wishlist": [{k: c[k] for k in
-                      ("id", "name", "collector_number", "rarity", "qty", "image_url")}
+        "wishlist": [{**{k: c[k] for k in
+                         ("id", "name", "collector_number", "rarity", "qty")},
+                      "image_url": f"/img/pkm/{c['id']}"}
                      for c in cards],
         "sellers": seller_results[:20],
         "split_baseline": {

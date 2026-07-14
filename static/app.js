@@ -40,7 +40,7 @@ function cardEl(c) {
   div.className = "card-item";
   const inList = wishlist.has(c.id);
   div.innerHTML = `
-    <img src="${c.image_url || ""}" loading="lazy" alt="${c.name || ""}">
+    <img src="${c.image_url || ""}" alt="${c.name || ""}">
     <div class="meta">
       <span class="name">${c.name || "（未知）"}</span>
       <span class="sub">${c.set_alpha || ""} ${c.collector_number || ""}</span>
