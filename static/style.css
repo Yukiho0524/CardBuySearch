@@ -45,6 +45,23 @@ body {
 }
 .panel h2 { font-size: 1.1rem; margin-bottom: 12px; }
 
+.game-tabs { display: flex; gap: 14px; margin-bottom: 10px; font-size: .9rem; }
+.game-tabs label {
+  cursor: pointer; padding: 5px 12px; border: 1px solid var(--border);
+  border-radius: 999px; background: #fafbfc;
+}
+.game-tabs label:has(input:checked) {
+  background: var(--ink); color: #fff; border-color: var(--ink);
+}
+.game-tabs input { display: none; }
+
+.wishlist select.opt {
+  padding: 3px 4px; border: 1px solid var(--border); border-radius: 5px;
+  font-size: .78rem; max-width: 86px;
+}
+.game-icon { font-size: .72rem; padding: 0 5px; border-radius: 4px;
+  background: #e0e7ff; color: #3730a3; }
+
 .search-controls { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
 .search-controls input {
   flex: 1; min-width: 200px;

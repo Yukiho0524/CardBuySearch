@@ -8,10 +8,15 @@ from pathlib import Path
 import requests as _requests
 from flask import Flask, abort, jsonify, request, send_from_directory
 
+from opencc import OpenCC
+
 from db import get_conn
-from ruten import find_listings_for_card
+from ruten import (YGO_LANGS, YGO_RARITIES, find_listings_for_card,
+                   find_listings_for_ygo)
 
 app = Flask(__name__, static_folder="static", static_url_path="")
+
+_t2s = OpenCC("t2s")   # 讓使用者用繁中搜到簡中卡名
 
 IMG_CACHE = Path(__file__).parent / "data" / "img_cache"
 YGO_IMG_URL = "https://images.ygoprodeck.com/images/cards/{id}.jpg"
@@ -57,27 +62,47 @@ def img_proxy(game, card_id):
 
 @app.get("/api/search")
 def api_search():
-    """卡片搜尋：q＝卡名或編號（如 094/081），rarity＝稀有度過濾。"""
+    """卡片搜尋：game＝pkm/ygo，q＝卡名或編號，rarity＝稀有度過濾（僅寶可夢）。"""
+    game = request.args.get("game", "pkm")
     q = (request.args.get("q") or "").strip()
     rarity = (request.args.get("rarity") or "").strip()
     if not q and not rarity:
         return jsonify({"cards": []})
     conn = get_conn()
-    sql = "SELECT * FROM cards WHERE detail_fetched=1"
-    params = []
-    if q:
-        sql += " AND (name LIKE ? OR collector_number LIKE ?)"
-        params += [f"%{q}%", f"%{q}%"]
-    if rarity:
-        sql += " AND rarity = ?"
-        params.append(rarity)
-    sql += " ORDER BY id DESC LIMIT 60"
-    rows = [dict(r) for r in conn.execute(sql, params)]
+    if game == "ygo":
+        q_sc = _t2s.convert(q)
+        rows = [dict(r) for r in conn.execute(
+            "SELECT * FROM ygo_cards WHERE name_tc LIKE ? OR name_sc LIKE ? "
+            "OR name_jp LIKE ? OR name_en LIKE ? LIMIT 60",
+            (f"%{q}%", f"%{q_sc}%", f"%{q}%", f"%{q}%"))]
+        cards = [{
+            "id": r["id"], "game": "ygo", "name": r["name_tc"],
+            "name_jp": r["name_jp"], "types": r["types"],
+            "collector_number": None, "rarity": None,
+            "image_url": f"/img/ygo/{r['id']}",
+        } for r in rows]
+    else:
+        sql = "SELECT * FROM cards WHERE detail_fetched=1"
+        params = []
+        if q:
+            sql += " AND (name LIKE ? OR collector_number LIKE ?)"
+            params += [f"%{q}%", f"%{q}%"]
+        if rarity:
+            sql += " AND rarity = ?"
+            params.append(rarity)
+        sql += " ORDER BY id DESC LIMIT 60"
+        cards = [dict(r) for r in conn.execute(sql, params)]
+        for r in cards:
+            r["image_url"] = f"/img/pkm/{r['id']}"
+            r["game"] = "pkm"
     conn.close()
-    for r in rows:
-        r["image_url"] = f"/img/pkm/{r['id']}"
-        r["game"] = "pkm"
-    return jsonify({"cards": rows})
+    return jsonify({"cards": cards})
+
+
+@app.get("/api/ygo/options")
+def api_ygo_options():
+    """遊戲王願望清單可選的稀有度與紙種。"""
+    return jsonify({"rarities": list(YGO_RARITIES), "langs": list(YGO_LANGS)})
 
 
 @app.get("/api/rarities")
@@ -103,60 +128,77 @@ def api_compare():
         return jsonify({"error": "願望清單需為 1–12 張卡"}), 400
 
     conn = get_conn()
-    cards = []
+    wants = []  # 統一格式：{key, game, card_id, name, collector_number, rarity, lang, qty}
     for it in items:
-        row = conn.execute(
-            "SELECT * FROM cards WHERE id=?", (it["card_id"],)).fetchone()
-        if row:
-            cards.append({**dict(row), "qty": max(1, int(it.get("qty", 1)))})
+        game = it.get("game", "pkm")
+        qty = max(1, int(it.get("qty", 1)))
+        if game == "ygo":
+            row = conn.execute(
+                "SELECT * FROM ygo_cards WHERE id=?", (it["card_id"],)).fetchone()
+            if row:
+                wants.append({
+                    "key": f"ygo:{row['id']}", "game": "ygo", "card_id": row["id"],
+                    "name": row["name_tc"], "names": [row["name_tc"], row["name_sc"], row["name_jp"]],
+                    "collector_number": None,
+                    "rarity": (it.get("rarity") or None),
+                    "lang": (it.get("lang") or None), "qty": qty,
+                })
+        else:
+            row = conn.execute(
+                "SELECT * FROM cards WHERE id=?", (it["card_id"],)).fetchone()
+            if row:
+                wants.append({
+                    "key": f"pkm:{row['id']}", "game": "pkm", "card_id": row["id"],
+                    "name": row["name"], "names": None,
+                    "collector_number": row["collector_number"],
+                    "rarity": row["rarity"], "lang": None, "qty": qty,
+                })
     conn.close()
-    if not cards:
+    if not wants:
         return jsonify({"error": "找不到指定卡片"}), 400
 
     # 每張卡查露天 → 依賣家彙整
     per_card_listings = {}
-    for c in cards:
-        listings = find_listings_for_card(
-            c["name"], c["collector_number"], c["rarity"])
+    for w in wants:
+        if w["game"] == "ygo":
+            listings = find_listings_for_ygo(
+                [n for n in w["names"] if n], w["rarity"], w["lang"])
+        else:
+            listings = find_listings_for_card(
+                w["name"], w["collector_number"], w["rarity"])
         listings = [l for l in listings if l["price"] and (l["stock"] or 0) > 0]
         listings.sort(key=lambda l: (CONFIDENCE_ORDER[l["confidence"]], l["price"]))
-        per_card_listings[c["id"]] = listings
+        per_card_listings[w["key"]] = listings
 
-    sellers = defaultdict(dict)  # seller_id -> {card_id: best_listing}
-    for cid, listings in per_card_listings.items():
+    sellers = defaultdict(dict)  # seller_id -> {want_key: best_listing}
+    for key, listings in per_card_listings.items():
         for l in listings:
-            cur = sellers[l["seller_id"]].get(cid)
+            cur = sellers[l["seller_id"]].get(key)
             if cur is None or (CONFIDENCE_ORDER[l["confidence"]], l["price"]) < \
                     (CONFIDENCE_ORDER[cur["confidence"]], cur["price"]):
-                sellers[l["seller_id"]][cid] = l
+                sellers[l["seller_id"]][key] = l
 
-    card_by_id = {c["id"]: c for c in cards}
+    def want_info(w):
+        return {"card_id": w["card_id"], "game": w["game"], "card_name": w["name"],
+                "collector_number": w["collector_number"], "rarity": w["rarity"],
+                "lang": w["lang"], "qty": w["qty"]}
+
+    want_by_key = {w["key"]: w for w in wants}
     seller_results = []
     for sid, offer in sellers.items():
-        covered = []
-        subtotal = 0
-        shipping = 0
-        for cid, l in offer.items():
-            c = card_by_id[cid]
-            covered.append({
-                "card_id": cid, "card_name": c["name"],
-                "collector_number": c["collector_number"],
-                "rarity": c["rarity"], "qty": c["qty"],
-                "listing": l,
-            })
-            subtotal += l["price"] * c["qty"]
+        covered, subtotal, shipping = [], 0, 0
+        for key, l in offer.items():
+            w = want_by_key[key]
+            covered.append({**want_info(w), "listing": l})
+            subtotal += l["price"] * w["qty"]
             shipping = max(shipping, l["shipping_cost"] or 0)
         seller_results.append({
             "seller_id": sid,
             "covered_count": len(covered),
-            "total_count": len(cards),
-            "complete": len(covered) == len(cards),
+            "total_count": len(wants),
+            "complete": len(covered) == len(wants),
             "covered": covered,
-            "missing": [
-                {"card_id": c["id"], "card_name": c["name"],
-                 "collector_number": c["collector_number"], "rarity": c["rarity"]}
-                for c in cards if c["id"] not in offer
-            ],
+            "missing": [want_info(w) for w in wants if w["key"] not in offer],
             "subtotal": subtotal,
             "shipping": shipping,
             "total": subtotal + shipping,
@@ -166,15 +208,11 @@ def api_compare():
 
     # 跨賣家拆買基準：每張卡取全站最便宜，運費按涉及的賣家各計一次
     split_items, split_sellers = [], {}
-    for c in cards:
-        listings = per_card_listings[c["id"]]
+    for w in wants:
+        listings = per_card_listings[w["key"]]
         if listings:
             best = listings[0]
-            split_items.append({
-                "card_id": c["id"], "card_name": c["name"],
-                "collector_number": c["collector_number"],
-                "rarity": c["rarity"], "qty": c["qty"], "listing": best,
-            })
+            split_items.append({**want_info(w), "listing": best})
             sid = best["seller_id"]
             split_sellers[sid] = max(
                 split_sellers.get(sid, 0), best["shipping_cost"] or 0)
@@ -182,15 +220,13 @@ def api_compare():
     split_shipping = sum(split_sellers.values())
 
     return jsonify({
-        "wishlist": [{**{k: c[k] for k in
-                         ("id", "name", "collector_number", "rarity", "qty")},
-                      "image_url": f"/img/pkm/{c['id']}"}
-                     for c in cards],
+        "wishlist": [{**want_info(w), "image_url": f"/img/{w['game']}/{w['card_id']}"}
+                     for w in wants],
         "sellers": seller_results[:20],
         "split_baseline": {
             "items": split_items,
             "found_count": len(split_items),
-            "total_count": len(cards),
+            "total_count": len(wants),
             "seller_count": len(split_sellers),
             "subtotal": split_subtotal,
             "shipping": split_shipping,

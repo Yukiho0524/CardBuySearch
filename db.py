@@ -25,6 +25,21 @@ CREATE TABLE IF NOT EXISTS crawl_progress (
     key   TEXT PRIMARY KEY,
     value TEXT
 );
+
+-- 遊戲王卡（資料來源：百鴿 ygocdb.com 全量匯出，簡中以 OpenCC 轉繁中）
+-- 遊戲王的稀有度/語言（日紙、韓紙）依印刷版本而異且無公開資料庫，
+-- 由使用者在加入願望清單時指定。
+CREATE TABLE IF NOT EXISTS ygo_cards (
+    id       INTEGER PRIMARY KEY,  -- 卡片密碼（8位數，對應卡圖）
+    cid      INTEGER,              -- ygocdb 卡片編號
+    name_tc  TEXT,                 -- 繁中卡名（OpenCC 轉換）
+    name_sc  TEXT,                 -- 簡中卡名
+    name_jp  TEXT,
+    name_en  TEXT,
+    types    TEXT                  -- 卡片種類描述
+);
+CREATE INDEX IF NOT EXISTS idx_ygo_name_tc ON ygo_cards(name_tc);
+CREATE INDEX IF NOT EXISTS idx_ygo_name_jp ON ygo_cards(name_jp);
 """
 
 

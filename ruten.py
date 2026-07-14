@@ -43,6 +43,32 @@ RARITY_ALIASES = {
     "TR": ["TR"],
 }
 
+# 遊戲王稀有度（OCG）：標準標籤 → 標題常見寫法（含台灣行話）
+YGO_RARITIES = {
+    "N": ["N", "普卡", "平卡", "普通"],
+    "R": ["R", "銀字"],
+    "SR": ["SR", "亮面"],
+    "UR": ["UR", "金亮", "金字"],
+    "SEC": ["SEC", "SE", "SER", "鑽石"],
+    "UTR": ["UTR", "浮雕"],
+    "EXSEC": ["EXSEC", "EX鑽"],
+    "CR": ["CR", "雕鑽", "雕面"],
+    "HR": ["HR", "雷射"],
+    "20th": ["20TH", "20th", "紅鑽", "二十"],
+    "QCSE": ["QCSE", "25TH", "25th", "QC", "銀鑽"],
+    "PSER": ["PSER", "白鑽"],
+}
+
+# 紙種（發行語言）：標籤 → 標題常見寫法；卡號中的 -JP/-KR 另以 regex 判斷
+YGO_LANGS = {
+    "日紙": ["日紙", "日版", "日文", "日字", "JP"],
+    "韓紙": ["韓紙", "韓版", "韓文", "韓字", "KR"],
+}
+YGO_LANG_CODE_RE = {
+    "日紙": re.compile(r"-JP[A-Z]?\d+", re.I),   # 如 PAC1-JP016、TT01-JPB11
+    "韓紙": re.compile(r"-KR[A-Z]?\d+", re.I),
+}
+
 # 明顯不是單卡的商品（套組、代抓、福袋等）
 EXCLUDE_WORDS = ["整盒", "整箱", "福袋", "抽獎", "代抽", "禮盒", "補充包",
                  "未拆", "原盒", "卡冊", "卡套", "自組", "牌組出租",
@@ -126,6 +152,84 @@ def title_matches_card(title, card_name, collector_number=None, rarity=None):
     return "strong" if num_hit else "weak"
 
 
+def title_matches_ygo(title, names, rarity=None, lang=None):
+    """判斷露天商品標題是否對應遊戲王卡＋稀有度＋紙種（日紙/韓紙）。
+
+    names：可接受的卡名清單（繁中/簡中/日文），標題含任一即算命中。
+    回傳 'strong'（稀有度+紙種都符合）/ 'weak'（部分符合）/ 'maybe'（標題未標示）/ None
+    """
+    t_norm = _norm(title).replace(" ", "")
+    if not any(_norm(n).replace(" ", "") in t_norm for n in names if n):
+        return None
+    if any(w in title for w in EXCLUDE_WORDS):
+        return None
+    tokens = set(re.split(r"[^A-Z0-9]+", _norm(title)))
+
+    def hit(aliases):
+        return any(
+            (a.upper() in tokens) if re.fullmatch(r"[A-Za-z0-9]+", a) else (a in title)
+            for a in aliases)
+
+    unknown = 0
+    if rarity:
+        aliases = YGO_RARITIES.get(rarity, [rarity])
+        conflicting = any(
+            lbl != rarity and hit(als) for lbl, als in YGO_RARITIES.items()
+            # SR/UR 的字母別名是 SEC/EXSEC 等的子字串已用 token 邊界處理
+        )
+        if hit(aliases):
+            pass
+        elif conflicting:
+            return None  # 標題寫了別的稀有度
+        else:
+            unknown += 1
+    if lang:
+        def lang_hit(lbl):
+            return hit(YGO_LANGS[lbl]) or bool(YGO_LANG_CODE_RE[lbl].search(title))
+        if lang_hit(lang):
+            pass
+        elif any(lang_hit(lbl) for lbl in YGO_LANGS if lbl != lang):
+            return None  # 標題寫了別的紙種
+        else:
+            unknown += 1
+    if unknown == 0:
+        return "strong"
+    return "maybe" if unknown == 2 else "weak"
+
+
+def find_listings_for_ygo(names, rarity=None, lang=None, limit=40):
+    """遊戲王：搜露天並比對。names[0] 用於搜尋（繁中名），全部用於標題比對。
+
+    查詢只帶「卡名＋稀有度」（露天是全詞 AND，詞多會搜不到）；
+    紙種在標題比對階段過濾（含卡號 -JP/-KR 判斷）。
+    """
+    query = f"{names[0]} {rarity}" if rarity else f"遊戲王 {names[0]}"
+    products = search_products(query, limit=limit)
+    results = []
+    for p in products:
+        confidence = title_matches_ygo(p.get("ProdName", ""), names, rarity, lang)
+        if not confidence:
+            continue
+        results.append(_listing_dict(p, confidence))
+    return results
+
+
+def _listing_dict(p, confidence):
+    price_range = p.get("PriceRange") or [None, None]
+    return {
+        "prod_id": p["ProdId"],
+        "title": p.get("ProdName"),
+        "seller_id": str(p.get("SellerId")),
+        "price": price_range[0],
+        "shipping_cost": p.get("ShippingCost"),
+        "stock": p.get("StockQty"),
+        "sold": p.get("SoldQty"),
+        "image": ("https://gcs.rimg.com.tw" + p["Image"]) if p.get("Image") else None,
+        "url": ITEM_PAGE.format(id=p["ProdId"]),
+        "confidence": confidence,
+    }
+
+
 def find_listings_for_card(card_name, collector_number=None, rarity=None, limit=40):
     """搜露天並比對，回傳符合的商品清單。"""
     query = card_name
@@ -138,17 +242,5 @@ def find_listings_for_card(card_name, collector_number=None, rarity=None, limit=
             p.get("ProdName", ""), card_name, collector_number, rarity)
         if not confidence:
             continue
-        price_range = p.get("PriceRange") or [None, None]
-        results.append({
-            "prod_id": p["ProdId"],
-            "title": p.get("ProdName"),
-            "seller_id": str(p.get("SellerId")),
-            "price": price_range[0],
-            "shipping_cost": p.get("ShippingCost"),
-            "stock": p.get("StockQty"),
-            "sold": p.get("SoldQty"),
-            "image": ("https://gcs.rimg.com.tw" + p["Image"]) if p.get("Image") else None,
-            "url": ITEM_PAGE.format(id=p["ProdId"]),
-            "confidence": confidence,
-        })
+        results.append(_listing_dict(p, confidence))
     return results
