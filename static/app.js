@@ -196,9 +196,16 @@ function wantDesc(c) {
 function renderCompare(data) {
   const total = data.wishlist.length;
   const complete = data.sellers.filter((s) => s.complete);
-  $("#compareStatus").textContent = complete.length
+  let statusHtml = complete.length
     ? `找到 ${complete.length} 位賣家可一次湊齊全部 ${total} 張卡！`
     : `沒有賣家能一次湊齊全部 ${total} 張，以下依覆蓋數排序。`;
+  const hist = data.wishlist.filter((w) => w.history && w.history.samples > 1);
+  if (hist.length) {
+    statusHtml += "<br><small>30 天歷史參考價（本站查詢紀錄）：" +
+      hist.map((w) => `${w.card_name} 低 ${fmt(w.history.low)}／均 ${fmt(w.history.avg)}`).join("；") +
+      "</small>";
+  }
+  $("#compareStatus").innerHTML = statusHtml;
 
   const box = $("#compareResults");
   box.innerHTML = "";

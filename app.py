@@ -226,6 +226,15 @@ def api_compare():
         listings = [l for l in listings if l["price"] and (l["stock"] or 0) > 0]
         listings.sort(key=lambda l: (CONFIDENCE_ORDER[l["confidence"]], l["price"]))
         per_card_listings[w["key"]] = listings
+        if listings:  # 累積價格快照（每次比價記一筆當次最低價）
+            hist_conn = get_conn()
+            hist_conn.execute(
+                "INSERT INTO price_history (game, card_id, rarity, lang, price) "
+                "VALUES (?,?,?,?,?)",
+                (w["game"], w["card_id"], w["rarity"], w["lang"],
+                 min(l["price"] for l in listings)))
+            hist_conn.commit()
+            hist_conn.close()
 
     sellers = defaultdict(dict)  # seller_id -> {want_key: best_listing}
     for key, listings in per_card_listings.items():
@@ -286,8 +295,22 @@ def api_compare():
     split_subtotal = sum(i["listing"]["price"] * i["qty"] for i in split_items)
     split_shipping = sum(split_sellers.values())
 
+    # 各卡歷史參考價（同條件的過往快照）
+    conn = get_conn()
+    for w in wants:
+        row = conn.execute(
+            "SELECT MIN(price) AS lo, ROUND(AVG(price)) AS avg, COUNT(*) AS n "
+            "FROM price_history WHERE game=? AND card_id=? "
+            "AND IFNULL(rarity,'')=IFNULL(?,'') AND IFNULL(lang,'')=IFNULL(?,'') "
+            "AND ts >= datetime('now', 'localtime', '-30 days')",
+            (w["game"], w["card_id"], w["rarity"], w["lang"])).fetchone()
+        w["history"] = ({"low": row["lo"], "avg": row["avg"], "samples": row["n"]}
+                        if row and row["n"] else None)
+    conn.close()
+
     return jsonify({
-        "wishlist": [{**want_info(w), "image_url": f"/img/{w['game']}/{w['card_id']}"}
+        "wishlist": [{**want_info(w), "history": w["history"],
+                      "image_url": f"/img/{w['game']}/{w['card_id']}"}
                      for w in wants],
         "sellers": seller_results[:20],
         "split_baseline": {

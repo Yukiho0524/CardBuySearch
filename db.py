@@ -56,6 +56,17 @@ CREATE TABLE IF NOT EXISTS image_hashes (
     dhash   TEXT NOT NULL,       -- 64-bit dHash（hex）
     PRIMARY KEY (game, card_id)
 );
+
+-- 價格快照：每次比價時記錄各卡（含條件）在露天的最低價
+CREATE TABLE IF NOT EXISTS price_history (
+    game    TEXT NOT NULL,
+    card_id INTEGER NOT NULL,
+    rarity  TEXT,                -- 查詢條件（可為 NULL）
+    lang    TEXT,
+    price   INTEGER NOT NULL,    -- 當次最低價
+    ts      TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_price_hist ON price_history(game, card_id);
 """
 
 
