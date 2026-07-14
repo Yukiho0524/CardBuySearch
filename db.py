@@ -77,4 +77,9 @@ def get_conn():
     conn.execute("PRAGMA busy_timeout=30000")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
+    # 遷移：舊資料庫補欄位（SQLite 無 ADD COLUMN IF NOT EXISTS）
+    try:
+        conn.execute("ALTER TABLE ygo_cards ADD COLUMN name_cnocg TEXT")
+    except sqlite3.OperationalError:
+        pass  # 欄位已存在
     return conn

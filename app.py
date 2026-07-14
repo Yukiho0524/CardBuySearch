@@ -16,7 +16,8 @@ from ruten import (YGO_LANGS, YGO_RARITIES, find_listings_for_card,
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 
-_t2s = OpenCC("t2s")   # 讓使用者用繁中搜到簡中卡名
+_t2s = OpenCC("t2s")    # 讓使用者用繁中搜到簡中卡名
+_s2tw = OpenCC("s2twp")  # 讓使用者貼簡中也能搜到繁中卡名
 
 IMG_CACHE = Path(__file__).parent / "data" / "img_cache"
 YGO_IMG_URL = "https://images.ygoprodeck.com/images/cards/{id}.jpg"
@@ -71,10 +72,13 @@ def api_search():
     conn = get_conn()
     if game == "ygo":
         q_sc = _t2s.convert(q)
+        q_tc = _s2tw.convert(q)
         rows = [dict(r) for r in conn.execute(
-            "SELECT * FROM ygo_cards WHERE name_tc LIKE ? OR name_sc LIKE ? "
-            "OR name_jp LIKE ? OR name_en LIKE ? LIMIT 60",
-            (f"%{q}%", f"%{q_sc}%", f"%{q}%", f"%{q}%"))]
+            "SELECT * FROM ygo_cards WHERE name_tc LIKE ? OR name_tc LIKE ? "
+            "OR name_sc LIKE ? OR name_jp LIKE ? OR name_en LIKE ? "
+            "OR name_cnocg LIKE ? OR name_cnocg LIKE ? LIMIT 60",
+            (f"%{q}%", f"%{q_tc}%", f"%{q_sc}%", f"%{q}%", f"%{q}%",
+             f"%{q}%", f"%{q_tc}%"))]
         cards = [{
             "id": r["id"], "game": "ygo", "name": r["name_tc"],
             "name_jp": r["name_jp"], "types": r["types"],
@@ -195,7 +199,9 @@ def api_compare():
             if row:
                 wants.append({
                     "key": f"ygo:{row['id']}", "game": "ygo", "card_id": row["id"],
-                    "name": row["name_tc"], "names": [row["name_tc"], row["name_sc"], row["name_jp"]],
+                    "name": row["name_tc"],
+                    "names": [row["name_tc"], row["name_sc"], row["name_jp"],
+                              row["name_cnocg"]],
                     "collector_number": None,
                     "rarity": (it.get("rarity") or None),
                     "lang": (it.get("lang") or None), "qty": qty,
