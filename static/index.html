@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-Hant-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CardBuySearch — 缺卡湊齊比價</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>🃏 CardBuySearch</h1>
+    <p class="tagline">找出能一次買齊你缺卡的賣家 — 寶可夢繁中 × 露天拍賣</p>
+  </header>
+
+  <main class="layout">
+    <section class="panel search-panel">
+      <h2>1️⃣ 搜尋卡片</h2>
+      <div class="search-controls">
+        <input id="searchInput" type="text" placeholder="卡名或編號（例：噴火龍、094/081）"
+               autocomplete="off">
+        <select id="raritySelect"><option value="">全部稀有度</option></select>
+        <button id="searchBtn">搜尋</button>
+      </div>
+      <div id="searchResults" class="card-grid"></div>
+    </section>
+
+    <section class="panel wishlist-panel">
+      <h2>2️⃣ 願望清單 <span id="wishCount" class="badge">0</span></h2>
+      <ul id="wishlist" class="wishlist"></ul>
+      <button id="compareBtn" class="primary" disabled>🔍 尋找能湊齊的賣家</button>
+    </section>
+  </main>
+
+  <section id="compareSection" class="panel compare-panel" hidden>
+    <h2>3️⃣ 比價結果</h2>
+    <div id="compareStatus"></div>
+    <div id="compareResults"></div>
+  </section>
+
+  <footer>
+    <p>資料來源：寶可夢官方繁中卡查（卡圖版權屬 Pokémon）／露天拍賣公開搜尋。價格為即時查詢，實際以賣場為準。</p>
+  </footer>
+
+  <script src="app.js"></script>
+</body>
+</html>
