@@ -62,16 +62,24 @@ def fetch_list_page(page_no, rarity_code=None, keyword=None):
     return list(dict.fromkeys(ids)), total
 
 
-def crawl_rarity_map(conn, max_pages_per_rarity=None):
-    """Phase A：依稀有度過濾列表，寫入 卡片ID→稀有度。"""
+def crawl_rarity_map(conn, max_pages_per_rarity=None, refresh_pages=None):
+    """Phase A：依稀有度過濾列表，寫入 卡片ID→稀有度。
+
+    refresh_pages=N：增量更新模式——無視已完成標記，重掃每個稀有度的
+    前 N 頁（新卡會出現在列表最前面），用於每月新彈後補新卡。
+    """
     for code, label in RARITIES.items():
         progress_key = f"rarity_{code}_next_page"
-        row = conn.execute(
-            "SELECT value FROM crawl_progress WHERE key=?", (progress_key,)
-        ).fetchone()
-        page = int(row["value"]) if row else 1
-        if page == -1:  # 已完成
-            continue
+        if refresh_pages:
+            page = 1
+            max_pages_per_rarity = refresh_pages
+        else:
+            row = conn.execute(
+                "SELECT value FROM crawl_progress WHERE key=?", (progress_key,)
+            ).fetchone()
+            page = int(row["value"]) if row else 1
+            if page == -1:  # 已完成
+                continue
         pages_done = 0
         while True:
             ids, total = fetch_list_page(page, rarity_code=code)
@@ -82,10 +90,11 @@ def crawl_rarity_map(conn, max_pages_per_rarity=None):
                 "ON CONFLICT(id) DO UPDATE SET rarity=excluded.rarity",
                 [(i, label) for i in ids],
             )
-            conn.execute(
-                "INSERT OR REPLACE INTO crawl_progress VALUES (?, ?)",
-                (progress_key, str(page + 1)),
-            )
+            if not refresh_pages:  # 增量模式不動全量爬蟲的進度標記
+                conn.execute(
+                    "INSERT OR REPLACE INTO crawl_progress VALUES (?, ?)",
+                    (progress_key, str(page + 1)),
+                )
             conn.commit()
             print(f"[rarity {label}] 第 {page}/{total} 頁，{len(ids)} 張")
             pages_done += 1
@@ -96,7 +105,7 @@ def crawl_rarity_map(conn, max_pages_per_rarity=None):
                 break
             page += 1
             time.sleep(DELAY)
-        if page == -1:
+        if page == -1 and not refresh_pages:
             conn.execute(
                 "INSERT OR REPLACE INTO crawl_progress VALUES (?, ?)",
                 (progress_key, "-1"),
@@ -195,17 +204,21 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--rarity-map", action="store_true", help="Phase A：建稀有度對照")
     ap.add_argument("--max-pages", type=int, default=None, help="Phase A 每個稀有度最多爬幾頁")
+    ap.add_argument("--refresh-pages", type=int, default=None,
+                    help="增量更新：重掃每個稀有度前 N 頁補新卡")
     ap.add_argument("--details", action="store_true", help="Phase B：抓詳細頁")
     ap.add_argument("--limit", type=int, default=None, help="Phase B 最多抓幾張")
     ap.add_argument("--keyword", type=str, default=None, help="針對關鍵字抓卡")
     args = ap.parse_args()
 
     conn = get_conn()
-    if args.rarity_map:
-        crawl_rarity_map(conn, max_pages_per_rarity=args.max_pages)
+    if args.rarity_map or args.refresh_pages:
+        crawl_rarity_map(conn, max_pages_per_rarity=args.max_pages,
+                         refresh_pages=args.refresh_pages)
     if args.keyword:
         crawl_keyword(conn, args.keyword)
     if args.details:
         crawl_details(conn, limit=args.limit)
-    if not (args.rarity_map or args.details or args.keyword):
+    if not (args.rarity_map or args.details or args.keyword
+            or args.refresh_pages):
         ap.print_help()

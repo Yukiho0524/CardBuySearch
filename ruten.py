@@ -360,19 +360,25 @@ def find_listings_for_ygo(names, rarity=None, lang=None, limit=40, codes=None,
 
 NICK_RE = re.compile(r'"nick":"([^"]+)"')
 BOARD_NAME_RE = re.compile(r'"boardName":"([^"]*)"')
+CREDIT_RATE_RE = re.compile(r'"creditRate":([\d.]+)')
+CREDIT_CNT_RE = re.compile(r'"creditCnt":(\d+)')
 
 
 def resolve_seller(conn, seller_id, sample_prod_id):
-    """賣家數字 ID → 賣場暱稱（露天無公開 API，從該賣家任一商品頁解析後快取）。
+    """賣家數字 ID → 賣場暱稱＋評價（從該賣家任一商品頁解析後快取）。
 
-    回傳 {nick, name}；解析失敗回傳 None 並快取空值避免重複嘗試。
+    回傳 {nick, name, credit_rate, credit_cnt}；解析失敗回傳 None
+    並快取空值避免重複嘗試。
     """
     row = conn.execute(
-        "SELECT nick, name FROM ruten_sellers WHERE seller_id=?",
-        (str(seller_id),)).fetchone()
-    if row:
-        return {"nick": row["nick"], "name": row["name"]} if row["nick"] else None
-    nick = name = None
+        "SELECT nick, name, credit_rate, credit_cnt FROM ruten_sellers "
+        "WHERE seller_id=?", (str(seller_id),)).fetchone()
+    # 舊快取沒有評價欄位時重新抓一次補齊
+    if row and (row["credit_rate"] is not None or not row["nick"]):
+        return ({"nick": row["nick"], "name": row["name"],
+                 "credit_rate": row["credit_rate"], "credit_cnt": row["credit_cnt"]}
+                if row["nick"] else None)
+    nick = name = rate = cnt = None
     try:
         r = session.get(
             f"https://www.ruten.com.tw/item/{sample_prod_id}/", timeout=15)
@@ -385,14 +391,19 @@ def resolve_seller(conn, seller_id, sample_prod_id):
                     name = json.loads(f'"{m.group(1)}"')
                 except ValueError:
                     name = None
+            m = CREDIT_RATE_RE.search(r.text)
+            rate = round(float(m.group(1)), 2) if m else None
+            m = CREDIT_CNT_RE.search(r.text)
+            cnt = int(m.group(1)) if m else None
     except Exception:
         pass
     conn.execute(
-        "INSERT OR REPLACE INTO ruten_sellers VALUES (?,?,?)",
-        (str(seller_id), nick, name))
+        "INSERT OR REPLACE INTO ruten_sellers VALUES (?,?,?,?,?)",
+        (str(seller_id), nick, name, rate, cnt))
     conn.commit()
     time.sleep(DELAY)
-    return {"nick": nick, "name": name} if nick else None
+    return ({"nick": nick, "name": name, "credit_rate": rate, "credit_cnt": cnt}
+            if nick else None)
 
 
 def _listing_dict(p, confidence):

@@ -332,6 +332,30 @@ function priceCell(listing, market) {
   return `<span class="${cls}">${fmt(listing.price)}</span>`;
 }
 
+function sparkline(series) {
+  // 每日最低價迷你走勢圖（≥3 個資料日才畫）
+  if (!series || series.length < 3) return "";
+  const prices = series.map((s) => s[1]);
+  const lo = Math.min(...prices), hi = Math.max(...prices);
+  const W = 72, H = 18, pad = 2;
+  const pts = series.map((s, i) => {
+    const x = pad + (i / (series.length - 1)) * (W - pad * 2);
+    const y = hi === lo ? H / 2
+      : pad + (1 - (s[1] - lo) / (hi - lo)) * (H - pad * 2);
+    return `${x.toFixed(1)},${y.toFixed(1)}`;
+  }).join(" ");
+  return `<svg class="spark" width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"
+    title="30 天每日最低價走勢">
+    <polyline points="${pts}" fill="none" stroke="#7c3aed" stroke-width="1.5"/></svg>`;
+}
+
+function creditNote(s) {
+  if (s.credit_rate == null) return "";
+  const cnt = s.credit_cnt >= 10000
+    ? (s.credit_cnt / 10000).toFixed(1) + "萬" : (s.credit_cnt || "");
+  return `<span class="credit">★${s.credit_rate}${cnt ? "（" + cnt + "）" : ""}</span>`;
+}
+
 function marketNote(market) {
   if (!market || !market.n) return "";
   if (market.low === market.high) return `<small class="mkt">行情 ${fmt(market.low)}（${market.n} 筆）</small>`;
@@ -365,7 +389,8 @@ function renderCompare(data) {
   const mkts = data.wishlist.filter((w) => w.market && w.market.n);
   if (mkts.length) {
     statusHtml += "<br><small>本次行情：" + mkts.map((w) =>
-      `${w.card_name} ${fmt(w.market.low)}${w.market.high > w.market.low ? "～" + fmt(w.market.high) : ""}`
+      `${w.card_name} ${fmt(w.market.low)}${w.market.high > w.market.low ? "～" + fmt(w.market.high) : ""}` +
+      sparkline(w.history_series)
     ).join("；") + "</small>";
   }
   const hist = data.wishlist.filter((w) => w.history && w.history.samples > 1);
@@ -404,7 +429,8 @@ function renderCompare(data) {
       <div class="seller-head">
         <span>賣家 ${s.store_url
           ? `<a href="${s.store_url}" target="_blank" rel="noopener">${s.seller_name || s.seller_nick}</a>`
-          : `#${s.seller_id}（<a href="${s.covered[0].listing.url}" target="_blank" rel="noopener">看商品頁</a>）`}</span>
+          : `#${s.seller_id}（<a href="${s.covered[0].listing.url}" target="_blank" rel="noopener">看商品頁</a>）`}
+          ${creditNote(s)}</span>
         <span class="cov ${covClass}">${s.complete ? "✅ 全齊" : `覆蓋 ${s.covered_count}/${s.total_count} 張`}</span>
         ${priceBadge}
         <span class="price">${fmt(s.total)} <small>（卡 ${fmt(s.subtotal)} + 運 ${fmt(s.shipping)}）</small></span>

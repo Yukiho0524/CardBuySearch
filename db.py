@@ -92,9 +92,14 @@ def get_conn():
     conn.execute("PRAGMA journal_mode=WAL")
     conn.executescript(SCHEMA)
     # 遷移：舊資料庫補欄位（SQLite 無 ADD COLUMN IF NOT EXISTS）
-    for col in ("name_cnocg", "name_md"):
+    for table, col, typ in (
+        ("ygo_cards", "name_cnocg", "TEXT"),
+        ("ygo_cards", "name_md", "TEXT"),
+        ("ruten_sellers", "credit_rate", "REAL"),   # 賣家評價（如 4.99）
+        ("ruten_sellers", "credit_cnt", "INTEGER"),  # 評價數
+    ):
         try:
-            conn.execute(f"ALTER TABLE ygo_cards ADD COLUMN {col} TEXT")
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
         except sqlite3.OperationalError:
             pass  # 欄位已存在
     return conn

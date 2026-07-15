@@ -173,6 +173,8 @@ button.primary:not(:disabled):hover { background: var(--accent-dark); }
 }
 .diff-note { color: var(--muted); font-size: .78rem; }
 .mkt { color: var(--muted); white-space: nowrap; }
+.spark { vertical-align: -4px; margin-left: 4px; }
+.credit { color: #b45309; font-size: .78rem; }
 
 .split-block { border: 2px dashed #94a3b8; }
 .pair-block { border: 2px solid #7c3aed; background: #faf8ff; }

@@ -550,6 +550,8 @@ def api_compare():
             s["seller_nick"] = info["nick"]
             s["seller_name"] = info["name"]
             s["store_url"] = f"https://www.ruten.com.tw/store/{info['nick']}/"
+            s["credit_rate"] = info.get("credit_rate")
+            s["credit_cnt"] = info.get("credit_cnt")
     conn.close()
 
     # 跨賣家拆買基準：每張卡取全站最便宜，運費按涉及的賣家各計一次
@@ -576,10 +578,20 @@ def api_compare():
             (w["game"], w["card_id"], w["rarity"], w["lang"])).fetchone()
         w["history"] = ({"low": row["lo"], "avg": row["avg"], "samples": row["n"]}
                         if row and row["n"] else None)
+        # 走勢圖序列（每日最低價，最近 30 天）
+        w["history_series"] = [
+            [r["d"], r["p"]] for r in conn.execute(
+                "SELECT date(ts) AS d, MIN(price) AS p FROM price_history "
+                "WHERE game=? AND card_id=? AND IFNULL(rarity,'')=IFNULL(?,'') "
+                "AND IFNULL(lang,'')=IFNULL(?,'') "
+                "AND ts >= datetime('now', 'localtime', '-30 days') "
+                "GROUP BY date(ts) ORDER BY d",
+                (w["game"], w["card_id"], w["rarity"], w["lang"]))]
     conn.close()
 
     return jsonify({
         "wishlist": [{**want_info(w), "history": w["history"],
+                      "history_series": w["history_series"],
                       "market": w["market"],
                       "image_url": f"/img/{w['game']}/{w['card_id']}"}
                      for w in wants],
