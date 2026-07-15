@@ -32,8 +32,17 @@
 
     <section class="panel wishlist-panel">
       <h2>2️⃣ 願望清單 <span id="wishCount" class="badge">0</span></h2>
+      <details class="import-box">
+        <summary>📋 匯入牌組</summary>
+        <p class="import-hint">貼上牌表：YDK 檔內容、「3 灰流麗」「灰流麗 x3」，
+          寶可夢可帶編號「2 噴火龍ex 125/108」。依上方選擇的遊戲解析。</p>
+        <textarea id="deckText" rows="6" placeholder="每行一張卡…"></textarea>
+        <button id="importBtn">匯入</button>
+        <p id="importResult" class="import-hint"></p>
+      </details>
       <ul id="wishlist" class="wishlist"></ul>
       <button id="compareBtn" class="primary" disabled>🔍 尋找能湊齊的賣家</button>
+      <button id="shareBtn" class="share-btn">🔗 分享清單</button>
     </section>
   </main>
 

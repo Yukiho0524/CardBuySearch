@@ -2,6 +2,8 @@
 
 啟動：python app.py  →  http://localhost:5000
 """
+import re
+import time
 from collections import defaultdict
 from pathlib import Path
 
@@ -24,6 +26,10 @@ IMG_CACHE = Path(__file__).parent / "data" / "img_cache"
 YGO_IMG_URL = "https://images.ygoprodeck.com/images/cards/{id}.jpg"
 
 CONFIDENCE_ORDER = {"strong": 0, "weak": 1, "maybe": 2}
+
+# 露天查詢結果快取（10 分鐘），避免重複比價時高頻打露天
+_listing_cache = {}
+LISTING_CACHE_TTL = 600
 
 
 @app.get("/")
@@ -257,6 +263,120 @@ def api_rarities():
     return jsonify({"rarities": rows})
 
 
+@app.get("/api/cards")
+def api_cards():
+    """批次取卡片資料（分享連結還原用）。?game=ygo&ids=1,2,3"""
+    game = request.args.get("game", "pkm")
+    try:
+        ids = [int(x) for x in (request.args.get("ids") or "").split(",") if x]
+    except ValueError:
+        return jsonify({"cards": []})
+    ids = ids[:40]
+    conn = get_conn()
+    cards = []
+    for cid in ids:
+        if game == "ygo":
+            r = conn.execute("SELECT * FROM ygo_cards WHERE id=?", (cid,)).fetchone()
+            if r:
+                cards.append({
+                    "id": r["id"], "game": "ygo", "name": r["name_tc"],
+                    "name_jp": r["name_jp"], "collector_number": None,
+                    "rarity": None, "image_url": f"/img/ygo/{r['id']}"})
+        else:
+            r = conn.execute("SELECT * FROM cards WHERE id=?", (cid,)).fetchone()
+            if r:
+                cards.append({**dict(r), "game": "pkm",
+                              "image_url": f"/img/pkm/{r['id']}"})
+    conn.close()
+    return jsonify({"cards": cards})
+
+
+@app.post("/api/import-deck")
+def api_import_deck():
+    """牌組匯入：貼牌表文字，解析成卡片清單。
+
+    支援格式：
+      - YDK 檔內容（遊戲王，數字行＝卡片密碼，重複＝張數）
+      - 「3 灰流麗」「灰流麗 x3」「灰流麗」等文字行
+      - 寶可夢可帶卡片編號：「2 噴火龍ex 125/108」
+    輸入: {"game": "ygo"|"pkm", "text": "..."}
+    輸出: {"items": [{card..., "qty": n}], "unmatched": [...]}
+    """
+    payload = request.get_json(force=True)
+    game = payload.get("game", "ygo")
+    text = payload.get("text") or ""
+    conn = get_conn()
+    counts = {}   # card_id -> qty
+    cards = {}    # card_id -> card dict
+    unmatched = []
+
+    def add(card, qty):
+        counts[card["id"]] = counts.get(card["id"], 0) + qty
+        cards[card["id"]] = card
+
+    qty_re = re.compile(
+        r"^(?:(\d{1,2})[xX×*]?\s+)?(.+?)(?:\s*[xX×*]\s*(\d{1,2}))?$")
+    num_re = re.compile(r"\b(\d{1,3}/[0-9A-Za-z-]+)\b")
+
+    for raw in text.splitlines():
+        line = raw.strip()
+        if not line or line.startswith(("#", "!", "//")):
+            continue  # YDK 註解/區段行
+        if game == "ygo" and re.fullmatch(r"\d{5,9}", line):
+            # YDK 卡片密碼
+            row = conn.execute(
+                "SELECT * FROM ygo_cards WHERE id=?", (int(line),)).fetchone()
+            if row:
+                add({"id": row["id"], "game": "ygo", "name": row["name_tc"],
+                     "name_jp": row["name_jp"], "collector_number": None,
+                     "rarity": None, "image_url": f"/img/ygo/{row['id']}"}, 1)
+            else:
+                unmatched.append(line)
+            continue
+        m = qty_re.match(line)
+        qty = int(m.group(1) or m.group(3) or 1)
+        name = m.group(2).strip()
+        if not name:
+            unmatched.append(raw)
+            continue
+        if game == "ygo":
+            hits = search_ygo(conn, name, limit=1)
+            if hits:
+                add(hits[0], qty)
+            else:
+                unmatched.append(raw)
+        else:
+            num_m = num_re.search(name)
+            row = None
+            if num_m:
+                name_part = name[:num_m.start()].strip() or None
+                sql = ("SELECT * FROM cards WHERE detail_fetched=1 "
+                       "AND collector_number=?")
+                params = [num_m.group(1)]
+                if name_part:
+                    sql += " AND name LIKE ?"
+                    params.append(f"%{name_part}%")
+                row = conn.execute(sql + " ORDER BY id DESC", params).fetchone()
+            if row is None:
+                row = conn.execute(
+                    "SELECT * FROM cards WHERE detail_fetched=1 AND name=? "
+                    "ORDER BY id DESC", (name,)).fetchone()
+            if row is None:
+                row = conn.execute(
+                    "SELECT * FROM cards WHERE detail_fetched=1 AND name LIKE ? "
+                    "ORDER BY length(name), id DESC", (f"%{name}%",)).fetchone()
+            if row:
+                add({**dict(row), "game": "pkm",
+                     "image_url": f"/img/pkm/{row['id']}"}, qty)
+            else:
+                unmatched.append(raw)
+    conn.close()
+    return jsonify({
+        "items": [{"card": cards[cid], "qty": q} for cid, q in counts.items()],
+        "unmatched": unmatched,
+    })
+
+
 @app.post("/api/compare")
 def api_compare():
     """核心功能：對願望清單跑露天搜尋，找出能一次湊齊最多卡的賣家。
@@ -266,8 +386,8 @@ def api_compare():
     """
     payload = request.get_json(force=True)
     items = payload.get("items") or []
-    if not items or len(items) > 12:
-        return jsonify({"error": "願望清單需為 1–12 張卡"}), 400
+    if not items or len(items) > 20:
+        return jsonify({"error": "願望清單需為 1–20 張卡（張數多時查詢需數分鐘）"}), 400
 
     conn = get_conn()
     wants = []  # 統一格式：{key, game, card_id, name, collector_number, rarity, lang, qty}
@@ -311,32 +431,39 @@ def api_compare():
     if not wants:
         return jsonify({"error": "找不到指定卡片"}), 400
 
-    # 每張卡查露天 → 依賣家彙整
+    # 每張卡查露天 → 依賣家彙整（10 分鐘 TTL 快取，降低對露天的請求量）
     per_card_listings = {}
     for w in wants:
-        if w["game"] == "ygo":
-            listings = find_listings_for_ygo(
-                [n for n in w["names"] if n], w["rarity"], w["lang"],
-                codes=w.get("codes"), art=w.get("art"))
+        cache_key = (w["game"], w["card_id"], w["rarity"], w["lang"], w.get("art"))
+        cached = _listing_cache.get(cache_key)
+        if cached and time.time() - cached[0] < LISTING_CACHE_TTL:
+            listings = cached[1]
         else:
-            listings = find_listings_for_card(
-                w["name"], w["collector_number"], w["rarity"])
-        listings = [l for l in listings if l["price"] and (l["stock"] or 0) > 0]
-        listings.sort(key=lambda l: (CONFIDENCE_ORDER[l["confidence"]], l["price"]))
+            if w["game"] == "ygo":
+                listings = find_listings_for_ygo(
+                    [n for n in w["names"] if n], w["rarity"], w["lang"],
+                    codes=w.get("codes"), art=w.get("art"))
+            else:
+                listings = find_listings_for_card(
+                    w["name"], w["collector_number"], w["rarity"])
+            listings = [l for l in listings if l["price"] and (l["stock"] or 0) > 0]
+            listings.sort(
+                key=lambda l: (CONFIDENCE_ORDER[l["confidence"]], l["price"]))
+            _listing_cache[cache_key] = (time.time(), listings)
+            if listings:  # 累積價格快照（快取命中不重複記錄）
+                hist_conn = get_conn()
+                hist_conn.execute(
+                    "INSERT INTO price_history (game, card_id, rarity, lang, price) "
+                    "VALUES (?,?,?,?,?)",
+                    (w["game"], w["card_id"], w["rarity"], w["lang"],
+                     min(l["price"] for l in listings)))
+                hist_conn.commit()
+                hist_conn.close()
         per_card_listings[w["key"]] = listings
         # 本次查詢的行情區間（給前端上色/顯示）
         prices = [l["price"] for l in listings]
         w["market"] = ({"low": min(prices), "high": max(prices), "n": len(prices)}
                        if prices else None)
-        if listings:  # 累積價格快照（每次比價記一筆當次最低價）
-            hist_conn = get_conn()
-            hist_conn.execute(
-                "INSERT INTO price_history (game, card_id, rarity, lang, price) "
-                "VALUES (?,?,?,?,?)",
-                (w["game"], w["card_id"], w["rarity"], w["lang"],
-                 min(l["price"] for l in listings)))
-            hist_conn.commit()
-            hist_conn.close()
 
     sellers = defaultdict(dict)  # seller_id -> {want_key: best_listing}
     for key, listings in per_card_listings.items():
@@ -373,6 +500,47 @@ def api_compare():
         })
     # 排序：湊齊優先 → 覆蓋數多 → 總價低
     seller_results.sort(key=lambda s: (-s["covered_count"], s["total"]))
+
+    # 雙賣家組合：找出「兩家合買湊齊」的最低總價（各計一次運費）
+    pair_best = None
+    if len(wants) >= 2:
+        cand = seller_results[:30]
+        for i in range(len(cand)):
+            for j in range(i + 1, len(cand)):
+                a, b = cand[i], cand[j]
+                offer_a, offer_b = sellers[a["seller_id"]], sellers[b["seller_id"]]
+                keys = set(offer_a) | set(offer_b)
+                if len(keys) < len(wants):
+                    continue
+                assign = {}  # key -> (listing, seller_id)
+                for key in keys:
+                    la, lb = offer_a.get(key), offer_b.get(key)
+                    if lb is None or (la is not None and la["price"] <= lb["price"]):
+                        assign[key] = (la, a["seller_id"])
+                    else:
+                        assign[key] = (lb, b["seller_id"])
+                used = {}
+                subtotal = 0
+                for key, (l, sid) in assign.items():
+                    subtotal += l["price"] * want_by_key[key]["qty"]
+                    used[sid] = max(used.get(sid, 0), l["shipping_cost"] or 0)
+                if len(used) < 2:
+                    continue  # 全部集中在一家＝單賣家情境，不算組合
+                total = subtotal + sum(used.values())
+                if pair_best is None or total < pair_best["total"]:
+                    pair_best = {
+                        "seller_ids": sorted(used),
+                        "items": [{**want_info(want_by_key[k]),
+                                   "listing": l, "seller_id": sid}
+                                  for k, (l, sid) in assign.items()],
+                        "subtotal": subtotal,
+                        "shipping": sum(used.values()),
+                        "total": total,
+                    }
+    # 只有在「沒有單家全齊」或「兩家組合比最便宜的單家全齊更省」時才提供
+    best_single = next((s for s in seller_results if s["complete"]), None)
+    if pair_best and best_single and pair_best["total"] >= best_single["total"]:
+        pair_best = None
 
     # 前幾名賣家補上賣場暱稱（從商品頁解析，結果有快取）
     conn = get_conn()
@@ -416,6 +584,7 @@ def api_compare():
                       "image_url": f"/img/{w['game']}/{w['card_id']}"}
                      for w in wants],
         "sellers": seller_results[:20],
+        "pair": pair_best,
         "split_baseline": {
             "items": split_items,
             "found_count": len(split_items),

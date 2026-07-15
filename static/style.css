@@ -99,6 +99,18 @@ body {
   background: #ffe9b8; color: #7a4c00; font-size: .72rem; font-weight: 700;
 }
 
+.import-box { margin-bottom: 10px; font-size: .85rem; }
+.import-box summary { cursor: pointer; color: #1d4ed8; }
+.import-box textarea {
+  width: 100%; margin: 6px 0; padding: 8px;
+  border: 1px solid var(--border); border-radius: 8px; font-size: .85rem;
+}
+.import-box button {
+  padding: 6px 16px; border: none; border-radius: 6px;
+  background: var(--ink); color: #fff; cursor: pointer;
+}
+.import-hint { color: var(--muted); font-size: .78rem; margin: 4px 0; }
+
 .wishlist { list-style: none; margin-bottom: 12px; }
 .wishlist li {
   display: flex; align-items: center; gap: 8px;
@@ -118,6 +130,11 @@ button.primary {
   background: var(--accent); color: #fff; border: none; border-radius: 8px; cursor: pointer;
 }
 button.primary:disabled { background: #c9ccd3; cursor: default; }
+.share-btn {
+  width: 100%; margin-top: 8px; padding: 8px; font-size: .85rem;
+  background: #fff; color: var(--ink); border: 1px solid var(--border);
+  border-radius: 8px; cursor: pointer;
+}
 button.primary:not(:disabled):hover { background: var(--accent-dark); }
 
 .compare-panel { margin: 0 16px 16px; }
@@ -158,6 +175,7 @@ button.primary:not(:disabled):hover { background: var(--accent-dark); }
 .mkt { color: var(--muted); white-space: nowrap; }
 
 .split-block { border: 2px dashed #94a3b8; }
+.pair-block { border: 2px solid #7c3aed; background: #faf8ff; }
 
 footer { padding: 14px 28px; color: var(--muted); font-size: .78rem; }
 

@@ -27,6 +27,7 @@ async function loadYgoOptions() {
 }
 loadRarities();
 loadYgoOptions();
+restoreWishlist();
 
 document.querySelectorAll('input[name="game"]').forEach((el) =>
   el.addEventListener("change", () => {
@@ -130,8 +131,105 @@ async function loadCardRarities(key, cardId) {
   } catch (e) { /* 查不到就維持完整選單 */ }
 }
 
+// ---------- 牌組匯入 ----------
+$("#importBtn").addEventListener("click", async () => {
+  const text = $("#deckText").value.trim();
+  if (!text) return;
+  $("#importResult").textContent = "解析中…";
+  try {
+    const res = await fetch("/api/import-deck", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ game: currentGame(), text }),
+    });
+    const data = await res.json();
+    let added = 0;
+    for (const it of data.items) {
+      const key = keyOf(it.card);
+      if (wishlist.has(key)) {
+        wishlist.get(key).qty += it.qty;
+      } else {
+        wishlist.set(key, { card: it.card, qty: it.qty, rarity: "", art: "",
+                            lang: it.card.game === "ygo" ? "日紙" : "",
+                            cardRarities: null });
+        if (it.card.game === "ygo") loadCardRarities(key, it.card.id);
+      }
+      added++;
+    }
+    renderWishlist();
+    $("#importResult").textContent = `匯入 ${added} 種卡` +
+      (data.unmatched.length
+        ? `；${data.unmatched.length} 行無法辨識：${data.unmatched.slice(0, 3).join("、")}${data.unmatched.length > 3 ? "…" : ""}`
+        : "");
+    if (added) $("#deckText").value = "";
+  } catch (err) {
+    $("#importResult").textContent = "匯入失敗：" + err.message;
+  }
+});
+
+// ---------- 願望清單持久化與分享 ----------
+function saveWishlist() {
+  const data = [...wishlist.values()].map((it) => ({
+    card: it.card, qty: it.qty, rarity: it.rarity, lang: it.lang, art: it.art,
+  }));
+  localStorage.setItem("cbs_wishlist", JSON.stringify(data));
+}
+
+function restoreWishlist() {
+  // 分享連結優先（#list=…），其次 localStorage
+  const hash = location.hash.match(/#list=([A-Za-z0-9+/=_-]+)/);
+  if (hash) {
+    try {
+      const b64 = hash[1].replace(/-/g, "+").replace(/_/g, "/");
+      const items = JSON.parse(decodeURIComponent(escape(atob(b64))));
+      const byGame = {};
+      for (const it of items) (byGame[it.g] = byGame[it.g] || []).push(it);
+      Promise.all(Object.entries(byGame).map(async ([game, its]) => {
+        const res = await fetch(`/api/cards?game=${game}&ids=${its.map((i) => i.id).join(",")}`);
+        const data = await res.json();
+        const cardById = {};
+        for (const c of data.cards) cardById[c.id] = c;
+        for (const it of its) {
+          const c = cardById[it.id];
+          if (!c) continue;
+          wishlist.set(keyOf(c), { card: c, qty: it.q || 1, rarity: it.r || "",
+                                   lang: it.l || "", art: it.a || "", cardRarities: null });
+          if (c.game === "ygo") loadCardRarities(keyOf(c), c.id);
+        }
+      })).then(() => renderWishlist());
+      history.replaceState(null, "", location.pathname);
+      return;
+    } catch (e) { /* 連結壞了就走 localStorage */ }
+  }
+  try {
+    const data = JSON.parse(localStorage.getItem("cbs_wishlist") || "[]");
+    for (const it of data) {
+      wishlist.set(keyOf(it.card), { card: it.card, qty: it.qty || 1,
+                                     rarity: it.rarity || "", lang: it.lang || "",
+                                     art: it.art || "", cardRarities: null });
+      if (it.card.game === "ygo") loadCardRarities(keyOf(it.card), it.card.id);
+    }
+    if (wishlist.size) renderWishlist();
+  } catch (e) { /* 空清單開始 */ }
+}
+
+$("#shareBtn").addEventListener("click", () => {
+  if (!wishlist.size) return;
+  const compact = [...wishlist.values()].map((it) => ({
+    g: it.card.game, id: it.card.id, q: it.qty,
+    r: it.rarity || undefined, l: it.lang || undefined, a: it.art || undefined,
+  }));
+  // unescape/escape 包一層讓 btoa 支援中文（如「日紙」）
+  const url = `${location.origin}${location.pathname}#list=${btoa(unescape(encodeURIComponent(JSON.stringify(compact))))}`;
+  navigator.clipboard.writeText(url).then(
+    () => { $("#shareBtn").textContent = "✅ 已複製連結";
+            setTimeout(() => { $("#shareBtn").textContent = "🔗 分享清單"; }, 2000); },
+    () => { prompt("複製這個連結：", url); });
+});
+
 // ---------- 願望清單 ----------
 function renderWishlist() {
+  saveWishlist();
   const ul = $("#wishlist");
   ul.innerHTML = "";
   for (const [key, item] of wishlist) {
@@ -164,13 +262,14 @@ function renderWishlist() {
       <button class="rm" title="移除">✕</button>`;
     li.querySelector(".qty").addEventListener("change", (e) => {
       item.qty = Math.max(1, parseInt(e.target.value) || 1);
+      saveWishlist();
     });
     const rar = li.querySelector(".rar");
-    if (rar) rar.addEventListener("change", (e) => { item.rarity = e.target.value; });
+    if (rar) rar.addEventListener("change", (e) => { item.rarity = e.target.value; saveWishlist(); });
     const lang = li.querySelector(".lang");
-    if (lang) lang.addEventListener("change", (e) => { item.lang = e.target.value; });
+    if (lang) lang.addEventListener("change", (e) => { item.lang = e.target.value; saveWishlist(); });
     const art = li.querySelector(".art");
-    if (art) art.addEventListener("change", (e) => { item.art = e.target.value; });
+    if (art) art.addEventListener("change", (e) => { item.art = e.target.value; saveWishlist(); });
     li.querySelector(".rm").addEventListener("click", () => {
       wishlist.delete(key);
       renderWishlist();
@@ -259,7 +358,8 @@ function renderCompare(data) {
         : `；拆買更便宜（${fmt(sp.total)}，差 ${fmt(-diff)}）`;
     }
   } else {
-    statusHtml = `沒有賣家能一次湊齊全部 ${total} 張，以下依覆蓋數排序。`;
+    statusHtml = `沒有賣家能一次湊齊全部 ${total} 張` +
+      (data.pair ? `，但有<b>雙賣家組合</b>可湊齊（見下方紫框）。` : `，以下依覆蓋數排序。`);
   }
   // 每張卡行情區間
   const mkts = data.wishlist.filter((w) => w.market && w.market.n);
@@ -313,6 +413,31 @@ function renderCompare(data) {
         <tr><th>卡片</th><th>露天商品</th><th>比對信心</th><th>單價</th></tr>${rows}
       </table>
       ${s.missing.length ? `<p class="missing-line">缺：${s.missing.map((m) => `${m.card_name}${m.rarity ? "（" + m.rarity + "）" : ""}`).join("、")}</p>` : ""}`;
+    box.appendChild(div);
+  }
+
+  // 雙賣家組合（沒有單家全齊、或兩家更省時後端才會給）
+  if (data.pair) {
+    const div = document.createElement("div");
+    div.className = "seller-block pair-block";
+    const rows = data.pair.items.map((c) => {
+      const mkt = marketByKey[`${c.game}:${c.card_id}`];
+      return `
+      <tr>
+        <td>${c.card_name}<br><small>${wantDesc(c)}</small></td>
+        <td><a href="${c.listing.url}" target="_blank" rel="noopener">${c.listing.title}</a></td>
+        <td>賣家 #${c.seller_id}</td>
+        <td>${priceCell(c.listing, mkt)}</td>
+      </tr>`;
+    }).join("");
+    div.innerHTML = `
+      <div class="seller-head">
+        <span>🤝 雙賣家組合（${data.pair.seller_ids.map((s) => "#" + s).join(" + ")}）可湊齊全部</span>
+        <span class="price">${fmt(data.pair.total)} <small>（卡 ${fmt(data.pair.subtotal)} + 運 ${fmt(data.pair.shipping)}）</small></span>
+      </div>
+      <table class="listing-table">
+        <tr><th>卡片</th><th>露天商品</th><th>賣家</th><th>單價</th></tr>${rows}
+      </table>`;
     box.appendChild(div);
   }
 

@@ -110,6 +110,8 @@ def get_printings(conn, card_id):
     printings = fetch_printings(row["cid"], card_id=card_id)
     if printings is None:
         return None  # 失敗不記快取，之後可重試
+    # 防止與預抓任務並發重複寫入
+    conn.execute("DELETE FROM ygo_printings WHERE card_id=?", (card_id,))
     conn.executemany(
         "INSERT INTO ygo_printings (card_id, code, pack, rarity, release) "
         "VALUES (?,?,?,?,?)",
