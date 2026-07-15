@@ -6,6 +6,7 @@
 import json
 import re
 import time
+from pathlib import Path
 
 import requests
 
@@ -79,6 +80,38 @@ YGO_LANG_CODE_RE = {
 EXCLUDE_WORDS = ["整盒", "整箱", "福袋", "抽獎", "代抽", "禮盒", "補充包",
                  "未拆", "原盒", "卡冊", "卡套", "自組", "牌組出租",
                  "同人", "工藝卡", "自製", "自印", "DIY", "代購"]
+
+# 遊戲王譯名同義詞字典（ygo_aliases.json，可自行增補）
+_ALIAS_PATH = Path(__file__).parent / "ygo_aliases.json"
+try:
+    YGO_ALIASES = json.loads(_ALIAS_PATH.read_text(encoding="utf-8"))["aliases"]
+except (OSError, KeyError, ValueError):
+    YGO_ALIASES = {}
+
+
+def expand_variants(names, cap=24):
+    """把卡名清單依同義詞字典做雙向替換展開（遞移、去重、上限 cap）。"""
+    variants, stack = [], [n for n in names if n]
+    while stack and len(variants) < cap:
+        n = stack.pop(0)
+        if n in variants:
+            continue
+        variants.append(n)
+        for key, alts in YGO_ALIASES.items():
+            forms = [key] + alts
+            for src in forms:
+                if src in n:
+                    for dst in forms:
+                        if dst != src:
+                            m = n.replace(src, dst)
+                            if m not in variants:
+                                stack.append(m)
+    return variants
+
+
+def _squash(s):
+    """比對用正規化：全形轉半形、大寫、去空白與間隔號。"""
+    return _norm(s).replace(" ", "").replace("·", "").replace("・", "")
 
 
 def search_products(query, limit=40):
@@ -158,14 +191,23 @@ def title_matches_card(title, card_name, collector_number=None, rarity=None):
     return "strong" if num_hit else "weak"
 
 
-def title_matches_ygo(title, names, rarity=None, lang=None):
-    """判斷露天商品標題是否對應遊戲王卡＋稀有度＋紙種（日紙/韓紙）。
+def title_matches_ygo(title, variants, segments=None, rarity=None, lang=None):
+    """判斷露天商品標題是否對應遊戲王卡＋稀有度＋紙種。
 
-    names：可接受的卡名清單（繁中/簡中/日文），標題含任一即算命中。
-    回傳 'strong'（稀有度+紙種都符合）/ 'weak'（部分符合）/ 'maybe'（標題未標示）/ None
+    variants：卡名所有變體（含別名展開），標題含任一（忽略間隔號/空白）即算命中。
+    segments：人名段變體（「救祓少女·馬爾法」的「馬爾法」等）；
+              只命中人名段時信心上限為 weak。
+    回傳 'strong' / 'weak' / 'maybe' / None
     """
-    t_norm = _norm(title).replace(" ", "")
-    if not any(_norm(n).replace(" ", "") in t_norm for n in names if n):
+    t_squash = _squash(title)
+    name_hit = any(_squash(v) in t_squash for v in variants if v)
+    seg_only = False
+    if not name_hit and segments:
+        if any(len(s) >= 2 and _squash(s) in t_squash for s in segments):
+            seg_only = True
+        else:
+            return None
+    elif not name_hit:
         return None
     if any(w in title for w in EXCLUDE_WORDS):
         return None
@@ -205,24 +247,78 @@ def title_matches_ygo(title, names, rarity=None, lang=None):
         else:
             unknown += 1
     if unknown == 0:
-        return "strong"
-    return "maybe" if unknown == 2 else "weak"
+        conf = "strong"
+    elif unknown == 2:
+        conf = "maybe"
+    else:
+        conf = "weak"
+    if seg_only and conf == "strong":
+        conf = "weak"  # 只命中人名段時降一級
+    return conf
+
+
+_KANA_RE = re.compile(r"[぀-ヿ]")
 
 
 def find_listings_for_ygo(names, rarity=None, lang=None, limit=40):
-    """遊戲王：搜露天並比對。names[0] 用於搜尋（繁中名），全部用於標題比對。
+    """遊戲王：搜露天並比對。
 
+    賣家譯名極不統一（官方譯名/社群譯名/音譯差異），策略：
+      1. 卡名依同義詞字典展開成多個變體
+      2. 依序用各變體查露天（最多 4 個查詢），結果合併去重
+      3. 標題比對認得所有變體與人名段（信心分級）
     查詢只帶「卡名＋稀有度」（露天是全詞 AND，詞多會搜不到）；
-    紙種在標題比對階段過濾（含卡號 -JP/-KR 判斷）。
+    紙種在標題比對階段過濾（字面優先，卡號 -JP/-KR/-EN 輔助）。
     """
-    query = f"{names[0]} {rarity}" if rarity else f"遊戲王 {names[0]}"
-    products = search_products(query, limit=limit)
-    results = []
-    for p in products:
-        confidence = title_matches_ygo(p.get("ProdName", ""), names, rarity, lang)
-        if not confidence:
+    variants = expand_variants(names)          # 標題比對用（全部）
+    query_bases = expand_variants(names[:2])   # 查詢生成用（繁中主名＋台版官方譯名）
+
+    def _segments_of(vs):
+        """取卡名最後一段當人名段（「·」「・」或空白分隔）。"""
+        out = []
+        for v in vs:
+            parts = re.split(r"[·・\s]+", v.strip())
+            if len(parts) >= 2 and parts[-1]:
+                out.append(parts[-1])
+        return list(dict.fromkeys(out))
+
+    segments = _segments_of(variants)
+
+    # 查詢候選（露天是全詞 AND，詞越多越搜不到）：
+    #   多段卡名 → 直接用「系列 人名」兩詞，不加「遊戲王」前綴
+    #   單段短卡名 → 加「遊戲王」前綴避免撞到別的商品
+    #   人名段查詢保證有配額（擴大召回，靠標題比對把關）
+    zh_bases = [v for v in query_bases if not _KANA_RE.search(v)]
+    name_queries, seg_queries = [], []
+    for v in zh_bases:
+        flat = re.sub(r"[·・\s]+", " ", v).strip()
+        if rarity:
+            name_queries.append(f"{flat} {rarity}")
+        elif " " in flat or len(flat) >= 5:
+            name_queries.append(flat)
+        else:
+            name_queries.append(f"遊戲王 {flat}")
+    for s in _segments_of(zh_bases)[:2]:
+        seg_queries.append(f"{s} {rarity}" if rarity else f"遊戲王 {s}")
+    n_name = 2 if seg_queries else 4
+    queries = list(dict.fromkeys(name_queries[:n_name] + seg_queries))
+
+    seen_ids, results = set(), []
+    for q in queries:
+        try:
+            products = search_products(q, limit=limit)
+        except Exception:
             continue
-        results.append(_listing_dict(p, confidence))
+        for p in products:
+            if p["ProdId"] in seen_ids:
+                continue
+            seen_ids.add(p["ProdId"])
+            confidence = title_matches_ygo(
+                p.get("ProdName", ""), variants, segments, rarity, lang)
+            if confidence:
+                results.append(_listing_dict(p, confidence))
+        if len(results) >= 25:  # 已夠多就不再打下一個查詢
+            break
     return results
 
 

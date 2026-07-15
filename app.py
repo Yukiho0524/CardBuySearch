@@ -11,8 +11,9 @@ from flask import Flask, abort, jsonify, request, send_from_directory
 from opencc import OpenCC
 
 from db import get_conn
-from ruten import (YGO_LANGS, YGO_RARITIES, find_listings_for_card,
-                   find_listings_for_ygo, resolve_seller)
+from ruten import (YGO_LANGS, YGO_RARITIES, expand_variants,
+                   find_listings_for_card, find_listings_for_ygo,
+                   resolve_seller)
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 
@@ -71,14 +72,17 @@ def api_search():
         return jsonify({"cards": []})
     conn = get_conn()
     if game == "ygo":
-        q_sc = _t2s.convert(q)
-        q_tc = _s2tw.convert(q)
+        # 查詢展開：簡繁互轉＋譯名同義詞（例：驅魔少女 → 救祓少女）
+        q_forms = list(dict.fromkeys(
+            expand_variants([q, _s2tw.convert(q), _t2s.convert(q)], cap=10)))
+        conds, params = [], []
+        for form in q_forms:
+            for col in ("name_tc", "name_sc", "name_jp", "name_en", "name_cnocg"):
+                conds.append(f"{col} LIKE ?")
+                params.append(f"%{form}%")
         rows = [dict(r) for r in conn.execute(
-            "SELECT * FROM ygo_cards WHERE name_tc LIKE ? OR name_tc LIKE ? "
-            "OR name_sc LIKE ? OR name_jp LIKE ? OR name_en LIKE ? "
-            "OR name_cnocg LIKE ? OR name_cnocg LIKE ? LIMIT 60",
-            (f"%{q}%", f"%{q_tc}%", f"%{q_sc}%", f"%{q}%", f"%{q}%",
-             f"%{q}%", f"%{q_tc}%"))]
+            f"SELECT * FROM ygo_cards WHERE {' OR '.join(conds)} LIMIT 60",
+            params)]
         cards = [{
             "id": r["id"], "game": "ygo", "name": r["name_tc"],
             "name_jp": r["name_jp"], "types": r["types"],
@@ -200,8 +204,10 @@ def api_compare():
                 wants.append({
                     "key": f"ygo:{row['id']}", "game": "ygo", "card_id": row["id"],
                     "name": row["name_tc"],
-                    "names": [row["name_tc"], row["name_sc"], row["name_jp"],
-                              row["name_cnocg"]],
+                    # 順序即查詢優先序：前兩個（繁中主名、台版官方譯名）用於
+                    # 露天查詢生成，全部用於標題比對
+                    "names": [row["name_tc"], row["name_cnocg"],
+                              row["name_sc"], row["name_jp"]],
                     "collector_number": None,
                     "rarity": (it.get("rarity") or None),
                     "lang": (it.get("lang") or None), "qty": qty,
