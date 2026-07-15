@@ -61,10 +61,12 @@ YGO_RARITIES = {
     "PSER": ["PSER", "白鑽"],
 }
 
-# 紙種（發行語言）：標籤 → 標題常見寫法；卡號中的 -JP/-KR/-EN 另以 regex 判斷
-# 「英紙」含美版/亞英：選日紙或韓紙時，寫明美英版的商品會被排除
+# 紙種（發行語言）：標籤 → 標題常見寫法；卡號中的 -KR/-EN/-SC 另以 regex 判斷
+# 台灣市場慣例：日紙較貴、賣家一定明標；「完全沒標」一律推定為韓紙。
+# 因此選日紙只收明標的（卡號 -JP 不算數：韓版卡也常標日版卡號），
+# 選韓紙則收明標韓紙＋未標示者。
 YGO_LANGS = {
-    "日紙": ["日紙", "日版", "日文", "日字", "JP"],
+    "日紙": ["日紙", "日版", "日文", "日字", "日本正版", "JP"],
     "韓紙": ["韓紙", "韓版", "韓文", "韓字", "KR"],
     "英紙": ["英紙", "美版", "英版", "英文", "美英", "亞英", "EN"],
     "簡中": ["簡中", "简中", "簡體", "简体", "簡版", "SC"],
@@ -237,16 +239,25 @@ def title_matches_ygo(title, variants, segments=None, rarity=None, lang=None):
         word_hits = {lbl: hit(als) for lbl, als in YGO_LANGS.items()}
         code_hits = {lbl: bool(rx.search(title))
                      for lbl, rx in YGO_LANG_CODE_RE.items()}
-        if word_hits[lang]:
-            pass
-        elif any(word_hits[l] for l in YGO_LANGS if l != lang):
-            return None  # 標題明寫了別的紙種
-        elif code_hits.get(lang):
-            pass
-        elif any(code_hits.values()):
-            return None  # 卡號屬於別的語言版本
-        else:
-            unknown += 1
+        others_word = any(word_hits[l] for l in YGO_LANGS if l != lang)
+        if lang == "日紙":
+            # 台灣慣例：沒明確標日紙一律視為韓紙；-JP 卡號不算證據
+            if not word_hits["日紙"]:
+                return None
+        elif lang == "韓紙":
+            if word_hits["韓紙"] or code_hits["韓紙"]:
+                pass
+            elif others_word or code_hits["英紙"] or code_hits["簡中"]:
+                return None  # 明標了別的紙種
+            else:
+                unknown += 1  # 未標示 → 依台灣慣例推定韓紙（信心降級）
+        else:  # 英紙 / 簡中
+            if word_hits[lang] or code_hits.get(lang):
+                pass
+            elif others_word or any(code_hits[l] for l in code_hits if l != lang):
+                return None
+            else:
+                unknown += 1
     if unknown == 0:
         conf = "strong"
     elif unknown == 2:
