@@ -291,6 +291,39 @@ def api_cards():
     return jsonify({"cards": cards})
 
 
+def fetch_pkm_deck(deck_code):
+    """抓官方訓練家網站的牌組（牌組編碼 → [(card_id, qty)]）。
+
+    牌組頁每張卡是 detail 連結＋count 張數，直接對應本站卡片 ID。
+    回傳 (entries, error_message)。
+    """
+    from bs4 import BeautifulSoup
+    url = f"https://asia.pokemon-card.com/tw/deck-build/recipe/{deck_code}/"
+    try:
+        r = _requests.get(url, timeout=20, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+    except Exception:
+        return None, "無法連線官方牌組頁，請稍後再試"
+    if not r.ok:
+        return None, f"找不到牌組編碼 {deck_code}"
+    soup = BeautifulSoup(r.text, "html.parser")
+    # 頁面含桌機/手機兩份排版（其一無張數標示），依卡片 ID 去重、取最大張數
+    merged = {}
+    for li in soup.select("li.card"):
+        a = li.select_one("a[href*='card-search/detail/']")
+        cnt = li.select_one(".count")
+        if not a:
+            continue
+        m = re.search(r"detail/(\d+)/", a["href"])
+        if m:
+            cid = int(m.group(1))
+            qty = int(cnt.get_text(strip=True)) if cnt else 1
+            merged[cid] = max(merged.get(cid, 0), qty)
+    if not merged:
+        return None, f"牌組編碼 {deck_code} 沒有解析到卡片（可能編碼錯誤）"
+    return list(merged.items()), None
+
+
 @app.post("/api/import-deck")
 def api_import_deck():
     """牌組匯入：貼牌表文字，解析成卡片清單。
@@ -304,11 +337,31 @@ def api_import_deck():
     """
     payload = request.get_json(force=True)
     game = payload.get("game", "ygo")
-    text = payload.get("text") or ""
+    text = (payload.get("text") or "").strip()
     conn = get_conn()
     counts = {}   # card_id -> qty
     cards = {}    # card_id -> card dict
     unmatched = []
+
+    # 寶可夢官方牌組編碼（XXXXXX-XXXXXX-XXXXXX 或牌組頁網址）
+    code_m = re.search(r"([A-Za-z0-9]{6}-[A-Za-z0-9]{6}-[A-Za-z0-9]{6})", text)
+    if game == "pkm" and code_m and len(text) < 200:
+        entries, err = fetch_pkm_deck(code_m.group(1))
+        if err:
+            conn.close()
+            return jsonify({"items": [], "unmatched": [err]})
+        items = []
+        for card_id, qty in entries:
+            row = conn.execute(
+                "SELECT * FROM cards WHERE id=?", (card_id,)).fetchone()
+            if row:
+                items.append({"card": {**dict(row), "game": "pkm",
+                                       "image_url": f"/img/pkm/{row['id']}"},
+                              "qty": qty})
+            else:
+                unmatched.append(f"卡片 ID {card_id}（資料庫未收錄）")
+        conn.close()
+        return jsonify({"items": items, "unmatched": unmatched})
 
     def add(card, qty):
         counts[card["id"]] = counts.get(card["id"], 0) + qty
