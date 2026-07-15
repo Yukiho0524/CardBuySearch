@@ -148,6 +148,15 @@ button.primary:not(:disabled):hover { background: var(--accent-dark); }
 .conf.maybe { background: #e5e7eb; color: #4b5563; }
 .missing-line { font-size: .8rem; color: var(--warn); margin-top: 6px; }
 
+.price-low { color: var(--ok); font-weight: 700; }
+.price-high { color: var(--accent); font-weight: 700; }
+.best-badge {
+  background: var(--ok); color: #fff; border-radius: 5px;
+  padding: 1px 8px; font-size: .78rem; font-weight: 700;
+}
+.diff-note { color: var(--muted); font-size: .78rem; }
+.mkt { color: var(--muted); white-space: nowrap; }
+
 .split-block { border: 2px dashed #94a3b8; }
 
 footer { padding: 14px 28px; color: var(--muted); font-size: .78rem; }

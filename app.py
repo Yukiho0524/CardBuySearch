@@ -239,6 +239,10 @@ def api_compare():
         listings = [l for l in listings if l["price"] and (l["stock"] or 0) > 0]
         listings.sort(key=lambda l: (CONFIDENCE_ORDER[l["confidence"]], l["price"]))
         per_card_listings[w["key"]] = listings
+        # 本次查詢的行情區間（給前端上色/顯示）
+        prices = [l["price"] for l in listings]
+        w["market"] = ({"low": min(prices), "high": max(prices), "n": len(prices)}
+                       if prices else None)
         if listings:  # 累積價格快照（每次比價記一筆當次最低價）
             hist_conn = get_conn()
             hist_conn.execute(
@@ -323,6 +327,7 @@ def api_compare():
 
     return jsonify({
         "wishlist": [{**want_info(w), "history": w["history"],
+                      "market": w["market"],
                       "image_url": f"/img/{w['game']}/{w['card_id']}"}
                      for w in wants],
         "sellers": seller_results[:20],

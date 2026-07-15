@@ -195,12 +195,53 @@ function wantDesc(c) {
   return `${bits}${bits ? " " : ""}×${c.qty}`;
 }
 
+function priceCell(listing, market) {
+  // 依本次行情區間上色：貼近最低=綠、貼近最高=紅
+  let cls = "";
+  if (market && market.n >= 3 && market.high > market.low) {
+    const pos = (listing.price - market.low) / (market.high - market.low);
+    cls = pos <= 0.25 ? "price-low" : pos >= 0.75 ? "price-high" : "";
+  } else if (market && listing.price <= market.low) {
+    cls = "price-low";
+  }
+  return `<span class="${cls}">${fmt(listing.price)}</span>`;
+}
+
+function marketNote(market) {
+  if (!market || !market.n) return "";
+  if (market.low === market.high) return `<small class="mkt">行情 ${fmt(market.low)}（${market.n} 筆）</small>`;
+  return `<small class="mkt">行情 ${fmt(market.low)}～${fmt(market.high)}（${market.n} 筆）</small>`;
+}
+
 function renderCompare(data) {
   const total = data.wishlist.length;
   const complete = data.sellers.filter((s) => s.complete);
-  let statusHtml = complete.length
-    ? `找到 ${complete.length} 位賣家可一次湊齊全部 ${total} 張卡！`
-    : `沒有賣家能一次湊齊全部 ${total} 張，以下依覆蓋數排序。`;
+  const marketByKey = {};
+  for (const w of data.wishlist) marketByKey[`${w.game}:${w.card_id}`] = w.market;
+
+  // 頂部摘要：最便宜全齊 vs 拆買基準
+  let statusHtml;
+  if (complete.length) {
+    const best = complete[0]; // 後端已排序：全齊在前、總價低在前
+    statusHtml = `找到 ${complete.length} 位賣家可一次湊齊全部 ${total} 張卡，` +
+      `<b>全齊最低總價 ${fmt(best.total)}</b>（含運）`;
+    const sp = data.split_baseline;
+    if (sp.found_count === sp.total_count && sp.items.length) {
+      const diff = sp.total - best.total;
+      statusHtml += diff >= 0
+        ? `，比拆買（${fmt(sp.total)}）省 <b class="price-low">${fmt(diff)}</b>`
+        : `；拆買更便宜（${fmt(sp.total)}，差 ${fmt(-diff)}）`;
+    }
+  } else {
+    statusHtml = `沒有賣家能一次湊齊全部 ${total} 張，以下依覆蓋數排序。`;
+  }
+  // 每張卡行情區間
+  const mkts = data.wishlist.filter((w) => w.market && w.market.n);
+  if (mkts.length) {
+    statusHtml += "<br><small>本次行情：" + mkts.map((w) =>
+      `${w.card_name} ${fmt(w.market.low)}${w.market.high > w.market.low ? "～" + fmt(w.market.high) : ""}`
+    ).join("；") + "</small>";
+  }
   const hist = data.wishlist.filter((w) => w.history && w.history.samples > 1);
   if (hist.length) {
     statusHtml += "<br><small>30 天歷史參考價（本站查詢紀錄）：" +
@@ -212,23 +253,34 @@ function renderCompare(data) {
   const box = $("#compareResults");
   box.innerHTML = "";
 
+  const bestTotal = complete.length ? complete[0].total : null;
   for (const s of data.sellers) {
     const div = document.createElement("div");
     div.className = "seller-block" + (s.complete ? " complete" : "");
     const covClass = s.complete ? "full" : "part";
-    const rows = s.covered.map((c) => `
+    let priceBadge = "";
+    if (s.complete && bestTotal !== null) {
+      priceBadge = s.total === bestTotal
+        ? '<span class="best-badge">💰 全齊最低價</span>'
+        : `<span class="diff-note">比最低 +${fmt(s.total - bestTotal).replace("NT$ ", "NT$")}</span>`;
+    }
+    const rows = s.covered.map((c) => {
+      const mkt = marketByKey[`${c.game}:${c.card_id}`];
+      return `
       <tr>
         <td>${c.card_name}<br><small>${wantDesc(c)}</small></td>
         <td><a href="${c.listing.url}" target="_blank" rel="noopener">${c.listing.title}</a></td>
         <td><span class="conf ${c.listing.confidence}">${confLabel[c.listing.confidence]}</span></td>
-        <td>${fmt(c.listing.price)}</td>
-      </tr>`).join("");
+        <td>${priceCell(c.listing, mkt)}<br>${marketNote(mkt)}</td>
+      </tr>`;
+    }).join("");
     div.innerHTML = `
       <div class="seller-head">
         <span>賣家 ${s.store_url
           ? `<a href="${s.store_url}" target="_blank" rel="noopener">${s.seller_name || s.seller_nick}</a>`
           : `#${s.seller_id}（<a href="${s.covered[0].listing.url}" target="_blank" rel="noopener">看商品頁</a>）`}</span>
         <span class="cov ${covClass}">${s.complete ? "✅ 全齊" : `覆蓋 ${s.covered_count}/${s.total_count} 張`}</span>
+        ${priceBadge}
         <span class="price">${fmt(s.total)} <small>（卡 ${fmt(s.subtotal)} + 運 ${fmt(s.shipping)}）</small></span>
       </div>
       <table class="listing-table">
