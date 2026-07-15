@@ -57,6 +57,20 @@ CREATE TABLE IF NOT EXISTS image_hashes (
     PRIMARY KEY (game, card_id)
 );
 
+-- 遊戲王收錄卡包（來源：Konami 官方 DB，加入願望清單時按需抓取後快取）
+CREATE TABLE IF NOT EXISTS ygo_printings (
+    card_id INTEGER NOT NULL,   -- 卡片密碼
+    code    TEXT,               -- 卡號（如 PAC1-JP016）
+    pack    TEXT,               -- 卡包名稱
+    rarity  TEXT,               -- 標準化稀有度（N/R/SR/UR/SEC/...）
+    release TEXT                -- 發售日
+);
+CREATE INDEX IF NOT EXISTS idx_ygo_printings ON ygo_printings(card_id);
+CREATE TABLE IF NOT EXISTS ygo_printings_fetched (
+    card_id INTEGER PRIMARY KEY,
+    ts      TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+
 -- 價格快照：每次比價時記錄各卡（含條件）在露天的最低價
 CREATE TABLE IF NOT EXISTS price_history (
     game    TEXT NOT NULL,

@@ -104,13 +104,30 @@ function cardEl(c) {
     <button ${inList ? "disabled" : ""}>${inList ? "已加入" : "＋ 加入清單"}</button>`;
   div.querySelector("button").addEventListener("click", (e) => {
     // 遊戲王預設日紙（台灣玩家主流），可在清單改成韓紙/英紙/不限
-    wishlist.set(keyOf(c), { card: c, qty: 1, rarity: "",
-                             lang: c.game === "ygo" ? "日紙" : "" });
+    const item = { card: c, qty: 1, rarity: "",
+                   lang: c.game === "ygo" ? "日紙" : "", cardRarities: null };
+    wishlist.set(keyOf(c), item);
     e.target.disabled = true;
     e.target.textContent = "已加入";
     renderWishlist();
+    if (c.game === "ygo") loadCardRarities(keyOf(c), c.id);
   });
   return div;
+}
+
+// 查這張卡實際出過的稀有度（Konami 官方收錄資料），縮小稀有度選單
+async function loadCardRarities(key, cardId) {
+  try {
+    const res = await fetch(`/api/ygo/printings/${cardId}`);
+    const data = await res.json();
+    const item = wishlist.get(key);
+    if (!item) return;
+    if (data.ok && data.rarities.length) {
+      item.cardRarities = data.rarities;
+      if (item.rarity && !data.rarities.includes(item.rarity)) item.rarity = "";
+      renderWishlist();
+    }
+  } catch (e) { /* 查不到就維持完整選單 */ }
 }
 
 // ---------- 願望清單 ----------
@@ -122,8 +139,10 @@ function renderWishlist() {
     const li = document.createElement("li");
     let optsHtml = "";
     if (c.game === "ygo") {
-      const rOpts = ['<option value="">稀有度?</option>',
-        ...ygoOptions.rarities.map((r) =>
+      // 有官方收錄資料時，只列這張卡實際出過的稀有度
+      const rarityList = item.cardRarities || ygoOptions.rarities;
+      const rOpts = [`<option value="">${item.cardRarities ? "稀有度?（此卡出過↓）" : "稀有度?"}</option>`,
+        ...rarityList.map((r) =>
           `<option value="${r}" ${item.rarity === r ? "selected" : ""}>${r}</option>`)];
       const lOpts = ['<option value="">紙種不限</option>',
         ...ygoOptions.langs.map((l) =>

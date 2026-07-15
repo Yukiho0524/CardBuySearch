@@ -62,6 +62,75 @@ def img_proxy(game, card_id):
     return resp
 
 
+_ygo_index = None  # [(card_id, [squashed_names...])]，重新匯入卡片後需重啟
+
+
+def _squash_q(s):
+    """搜尋正規化：大寫、去空白/間隔號/連字號（與 ruten._squash 一致）。"""
+    s = "".join(chr(ord(c) - 0xFEE0) if 0xFF01 <= ord(c) <= 0xFF5E else c for c in s)
+    return (s.upper().replace(" ", "").replace("·", "")
+            .replace("・", "").replace("-", ""))
+
+
+def get_ygo_index():
+    global _ygo_index
+    if _ygo_index is None:
+        conn = get_conn()
+        idx = []
+        for r in conn.execute(
+                "SELECT id, name_tc, name_sc, name_jp, name_en, "
+                "name_cnocg, name_md FROM ygo_cards"):
+            forms = {_squash_q(n) for n in
+                     (r["name_tc"], r["name_sc"], r["name_jp"],
+                      r["name_en"], r["name_cnocg"], r["name_md"]) if n}
+            idx.append((r["id"], sorted(forms, key=len)))
+        conn.close()
+        _ygo_index = idx
+    return _ygo_index
+
+
+def search_ygo(conn, q, limit=60):
+    """遊戲王搜尋：簡繁互轉＋譯名別名展開＋無視間隔號，依相關性排序。
+
+    排名：完全一致 → 開頭一致 → 包含；同名次時卡名短者優先
+    （搜「青眼白龍」時本尊排在「青眼白龍——尊嚴之龍」前面）。
+    """
+    q_forms = {_squash_q(f) for f in
+               expand_variants([q, _s2tw.convert(q), _t2s.convert(q)], cap=12)}
+    q_forms.discard("")
+    if not q_forms:
+        return []
+    scored = []
+    for card_id, names in get_ygo_index():
+        best = None
+        for n in names:
+            for f in q_forms:
+                if f == n:
+                    rank = 0
+                elif n.startswith(f):
+                    rank = 1
+                elif f in n:
+                    rank = 2
+                else:
+                    continue
+                key = (rank, len(n))
+                if best is None or key < best:
+                    best = key
+        if best is not None:
+            scored.append((best, card_id))
+    scored.sort()
+    cards = []
+    for _, cid in scored[:limit]:
+        r = conn.execute("SELECT * FROM ygo_cards WHERE id=?", (cid,)).fetchone()
+        cards.append({
+            "id": r["id"], "game": "ygo", "name": r["name_tc"],
+            "name_jp": r["name_jp"], "types": r["types"],
+            "collector_number": None, "rarity": None,
+            "image_url": f"/img/ygo/{r['id']}",
+        })
+    return cards
+
+
 @app.get("/api/search")
 def api_search():
     """卡片搜尋：game＝pkm/ygo，q＝卡名或編號，rarity＝稀有度過濾（僅寶可夢）。"""
@@ -72,24 +141,7 @@ def api_search():
         return jsonify({"cards": []})
     conn = get_conn()
     if game == "ygo":
-        # 查詢展開：簡繁互轉＋譯名同義詞（例：驅魔少女 → 救祓少女）
-        q_forms = list(dict.fromkeys(
-            expand_variants([q, _s2tw.convert(q), _t2s.convert(q)], cap=10)))
-        conds, params = [], []
-        for form in q_forms:
-            for col in ("name_tc", "name_sc", "name_jp", "name_en",
-                        "name_cnocg", "name_md"):
-                conds.append(f"{col} LIKE ?")
-                params.append(f"%{form}%")
-        rows = [dict(r) for r in conn.execute(
-            f"SELECT * FROM ygo_cards WHERE {' OR '.join(conds)} LIMIT 60",
-            params)]
-        cards = [{
-            "id": r["id"], "game": "ygo", "name": r["name_tc"],
-            "name_jp": r["name_jp"], "types": r["types"],
-            "collector_number": None, "rarity": None,
-            "image_url": f"/img/ygo/{r['id']}",
-        } for r in rows]
+        cards = search_ygo(conn, q)
     else:
         sql = "SELECT * FROM cards WHERE detail_fetched=1"
         params = []
@@ -169,6 +221,21 @@ def api_search_by_image():
 def api_ygo_options():
     """遊戲王願望清單可選的稀有度與紙種。"""
     return jsonify({"rarities": list(YGO_RARITIES), "langs": list(YGO_LANGS)})
+
+
+@app.get("/api/ygo/printings/<int:card_id>")
+def api_ygo_printings(card_id):
+    """這張卡實際出過的收錄卡包與稀有度（Konami 官方 DB，按需抓取後快取）。"""
+    from konami import get_printings
+
+    conn = get_conn()
+    printings = get_printings(conn, card_id)
+    conn.close()
+    if printings is None:
+        return jsonify({"printings": [], "rarities": [], "ok": False})
+    rarities = list(dict.fromkeys(
+        p["rarity"] for p in printings if p["rarity"]))
+    return jsonify({"printings": printings, "rarities": rarities, "ok": True})
 
 
 @app.get("/api/rarities")
