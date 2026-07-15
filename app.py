@@ -269,6 +269,11 @@ def api_compare():
             row = conn.execute(
                 "SELECT * FROM ygo_cards WHERE id=?", (it["card_id"],)).fetchone()
             if row:
+                # 官方卡號（Konami 收錄，含快取，新→舊）：查詢與比對的最強依據
+                from konami import get_printings
+                printings = get_printings(conn, row["id"]) or []
+                codes = list(dict.fromkeys(
+                    p["code"] for p in reversed(printings) if p["code"]))
                 wants.append({
                     "key": f"ygo:{row['id']}", "game": "ygo", "card_id": row["id"],
                     "name": row["name_tc"],
@@ -276,6 +281,7 @@ def api_compare():
                     # 用於露天查詢生成，全部用於標題比對
                     "names": [row["name_tc"], row["name_cnocg"], row["name_md"],
                               row["name_sc"], row["name_jp"]],
+                    "codes": codes,
                     "collector_number": None,
                     "rarity": (it.get("rarity") or None),
                     "lang": (it.get("lang") or None), "qty": qty,
@@ -299,7 +305,8 @@ def api_compare():
     for w in wants:
         if w["game"] == "ygo":
             listings = find_listings_for_ygo(
-                [n for n in w["names"] if n], w["rarity"], w["lang"])
+                [n for n in w["names"] if n], w["rarity"], w["lang"],
+                codes=w.get("codes"))
         else:
             listings = find_listings_for_card(
                 w["name"], w["collector_number"], w["rarity"])

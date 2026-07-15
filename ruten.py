@@ -196,16 +196,21 @@ def title_matches_card(title, card_name, collector_number=None, rarity=None):
     return "strong" if num_hit else "weak"
 
 
-def title_matches_ygo(title, variants, segments=None, rarity=None, lang=None):
+def title_matches_ygo(title, variants, segments=None, rarity=None, lang=None,
+                      codes=None):
     """判斷露天商品標題是否對應遊戲王卡＋稀有度＋紙種。
 
     variants：卡名所有變體（含別名展開），標題含任一（忽略間隔號/空白）即算命中。
+    codes：這張卡的官方卡號（如 LOCH-JP001）；標題含卡號＝確定是這張卡，
+           不受譯名混亂影響。
     segments：人名段變體（「救祓少女·馬爾法」的「馬爾法」等）；
               只命中人名段時信心上限為 weak。
     回傳 'strong' / 'weak' / 'maybe' / None
     """
     t_squash = _squash(title)
     name_hit = any(_squash(v) in t_squash for v in variants if v)
+    if not name_hit and codes:
+        name_hit = any(_squash(c) in t_squash for c in codes if c)
     seg_only = False
     if not name_hit and segments:
         if any(len(s) >= 2 and _squash(s) in t_squash for s in segments):
@@ -274,13 +279,14 @@ def title_matches_ygo(title, variants, segments=None, rarity=None, lang=None):
 _KANA_RE = re.compile(r"[぀-ヿ]")
 
 
-def find_listings_for_ygo(names, rarity=None, lang=None, limit=40):
+def find_listings_for_ygo(names, rarity=None, lang=None, limit=40, codes=None):
     """遊戲王：搜露天並比對。
 
     賣家譯名極不統一（官方譯名/社群譯名/音譯差異），策略：
-      1. 卡名依同義詞字典展開成多個變體
-      2. 依序用各變體查露天（最多 4 個查詢），結果合併去重
-      3. 標題比對認得所有變體與人名段（信心分級）
+      1. 官方卡號（如 LOCH-JP001）優先查詢——賣家標題幾乎都寫卡號，
+         不受譯名影響（codes 來自 Konami 收錄資料）
+      2. 卡名依同義詞字典展開成多個變體，依序查露天，結果合併去重
+      3. 標題比對認得卡號、所有卡名變體與人名段（信心分級）
     查詢只帶「卡名＋稀有度」（露天是全詞 AND，詞多會搜不到）；
     紙種在標題比對階段過濾（字面優先，卡號 -JP/-KR/-EN 輔助）。
     """
@@ -314,8 +320,10 @@ def find_listings_for_ygo(names, rarity=None, lang=None, limit=40):
             name_queries.append(f"遊戲王 {flat}")
     for s in _segments_of(zh_bases)[:2]:
         seg_queries.append(f"{s} {rarity}" if rarity else f"遊戲王 {s}")
+    code_queries = [c for c in (codes or [])][:2]  # 卡號查詢優先、精準度最高
     n_name = 2 if seg_queries else 4
-    queries = list(dict.fromkeys(name_queries[:n_name] + seg_queries))
+    queries = list(dict.fromkeys(
+        code_queries + name_queries[:n_name] + seg_queries))[:5]
 
     seen_ids, results = set(), []
     for q in queries:
@@ -328,7 +336,7 @@ def find_listings_for_ygo(names, rarity=None, lang=None, limit=40):
                 continue
             seen_ids.add(p["ProdId"])
             confidence = title_matches_ygo(
-                p.get("ProdName", ""), variants, segments, rarity, lang)
+                p.get("ProdName", ""), variants, segments, rarity, lang, codes)
             if confidence:
                 results.append(_listing_dict(p, confidence))
         if len(results) >= 25:  # 已夠多就不再打下一個查詢
