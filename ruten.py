@@ -73,6 +73,10 @@ YGO_LANGS = {
     "英紙": ["英紙", "美版", "英版", "英文", "美英", "亞英", "EN"],
     "簡中": ["簡中", "简中", "簡體", "简体", "簡版", "SC"],
 }
+# 插畫版本：超框（插畫超出卡框的異圖版本）標題常見寫法
+# 市場慣例與紙種類似：超框版賣家會明標，沒標的視為一般版
+YGO_ART_WORDS = ["超框", "異圖", "异图", "OF"]
+
 YGO_LANG_CODE_RE = {
     "日紙": re.compile(r"-JP[A-Z]?\d+", re.I),   # 如 PAC1-JP016、TT01-JPB11
     "韓紙": re.compile(r"-KR[A-Z]?\d+", re.I),
@@ -197,7 +201,7 @@ def title_matches_card(title, card_name, collector_number=None, rarity=None):
 
 
 def title_matches_ygo(title, variants, segments=None, rarity=None, lang=None,
-                      codes=None):
+                      codes=None, art=None):
     """判斷露天商品標題是否對應遊戲王卡＋稀有度＋紙種。
 
     variants：卡名所有變體（含別名展開），標題含任一（忽略間隔號/空白）即算命中。
@@ -222,6 +226,14 @@ def title_matches_ygo(title, variants, segments=None, rarity=None, lang=None,
     if any(w in title for w in EXCLUDE_WORDS):
         return None
     tokens = set(re.split(r"[^A-Z0-9]+", _norm(title)))
+
+    if art:  # 插畫版本過濾（超框版賣家會明標，沒標的視為一般版）
+        art_hit = any((w in tokens) if w.isascii() else (w in title)
+                      for w in YGO_ART_WORDS)
+        if art == "一般" and art_hit:
+            return None
+        if art == "超框" and not art_hit:
+            return None
 
     def hit(aliases):
         return any(
@@ -279,7 +291,8 @@ def title_matches_ygo(title, variants, segments=None, rarity=None, lang=None,
 _KANA_RE = re.compile(r"[぀-ヿ]")
 
 
-def find_listings_for_ygo(names, rarity=None, lang=None, limit=40, codes=None):
+def find_listings_for_ygo(names, rarity=None, lang=None, limit=40, codes=None,
+                          art=None):
     """遊戲王：搜露天並比對。
 
     賣家譯名極不統一（官方譯名/社群譯名/音譯差異），策略：
@@ -336,7 +349,8 @@ def find_listings_for_ygo(names, rarity=None, lang=None, limit=40, codes=None):
                 continue
             seen_ids.add(p["ProdId"])
             confidence = title_matches_ygo(
-                p.get("ProdName", ""), variants, segments, rarity, lang, codes)
+                p.get("ProdName", ""), variants, segments, rarity, lang, codes,
+                art)
             if confidence:
                 results.append(_listing_dict(p, confidence))
         if len(results) >= 25:  # 已夠多就不再打下一個查詢

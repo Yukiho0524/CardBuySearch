@@ -36,6 +36,13 @@ def img_proxy(game, card_id):
     """卡圖代理＋磁碟快取。官方圖伺服器對瀏覽器跨站請求會停滯，改由後端抓取後供應同源圖片。"""
     if game not in ("pkm", "ygo"):
         abort(404)
+    if game == "ygo":
+        # 官方日文卡圖優先（隨 Konami 收錄抓取進快取），EN 圖為後備
+        jp = IMG_CACHE / "ygo" / f"{card_id}.jp.jpg"
+        if jp.exists():
+            resp = send_from_directory(jp.parent, jp.name)
+            resp.headers["Cache-Control"] = "public, max-age=86400"
+            return resp
     ext = "png" if game == "pkm" else "jpg"
     cache = IMG_CACHE / game / f"{card_id}.{ext}"
     if not cache.exists():
@@ -58,7 +65,9 @@ def img_proxy(game, card_id):
         cache.parent.mkdir(parents=True, exist_ok=True)
         cache.write_bytes(r.content)
     resp = send_from_directory(cache.parent, cache.name)
-    resp.headers["Cache-Control"] = "public, max-age=604800"
+    # ygo 的 EN 圖是暫代（等日文圖抓齊會替換），快取時間縮短
+    resp.headers["Cache-Control"] = (
+        "public, max-age=86400" if game == "ygo" else "public, max-age=604800")
     return resp
 
 
@@ -284,7 +293,8 @@ def api_compare():
                     "codes": codes,
                     "collector_number": None,
                     "rarity": (it.get("rarity") or None),
-                    "lang": (it.get("lang") or None), "qty": qty,
+                    "lang": (it.get("lang") or None),
+                    "art": (it.get("art") or None), "qty": qty,
                 })
         else:
             row = conn.execute(
@@ -294,7 +304,8 @@ def api_compare():
                     "key": f"pkm:{row['id']}", "game": "pkm", "card_id": row["id"],
                     "name": row["name"], "names": None,
                     "collector_number": row["collector_number"],
-                    "rarity": row["rarity"], "lang": None, "qty": qty,
+                    "rarity": row["rarity"], "lang": None, "art": None,
+                    "qty": qty,
                 })
     conn.close()
     if not wants:
@@ -306,7 +317,7 @@ def api_compare():
         if w["game"] == "ygo":
             listings = find_listings_for_ygo(
                 [n for n in w["names"] if n], w["rarity"], w["lang"],
-                codes=w.get("codes"))
+                codes=w.get("codes"), art=w.get("art"))
         else:
             listings = find_listings_for_card(
                 w["name"], w["collector_number"], w["rarity"])
@@ -338,7 +349,7 @@ def api_compare():
     def want_info(w):
         return {"card_id": w["card_id"], "game": w["game"], "card_name": w["name"],
                 "collector_number": w["collector_number"], "rarity": w["rarity"],
-                "lang": w["lang"], "qty": w["qty"]}
+                "lang": w["lang"], "art": w.get("art"), "qty": w["qty"]}
 
     want_by_key = {w["key"]: w for w in wants}
     seller_results = []

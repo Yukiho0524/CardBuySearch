@@ -5,12 +5,16 @@
 """
 import re
 import time
+from pathlib import Path
 
 import requests
 from bs4 import BeautifulSoup
 
 CARD_URL = ("https://www.db.yugioh-card.com/yugiohdb/card_search.action"
             "?ope=2&cid={cid}&request_locale=ja")
+BASE = "https://www.db.yugioh-card.com/yugiohdb/"
+IMG_CACHE = Path(__file__).parent / "data" / "img_cache" / "ygo"
+GET_IMAGE_RE = re.compile(r"get_image\.action\?[^\"' >]+")
 DELAY = 0.5
 
 session = requests.Session()
@@ -31,13 +35,19 @@ RARITY_MAP = {
 }
 
 
-def fetch_printings(cid):
-    """回傳 [{code, pack, rarity, release}]；抓取/解析失敗回傳 None。"""
+def fetch_printings(cid, card_id=None):
+    """回傳 [{code, pack, rarity, release}]；抓取/解析失敗回傳 None。
+
+    card_id 給定時順路下載官方日文卡圖到 img_cache/ygo/{id}.jp.jpg
+    （圖片連結帶時效 token，必須在同一會話立即下載）。
+    """
     try:
         r = session.get(CARD_URL.format(cid=cid), timeout=30)
         r.raise_for_status()
     except Exception:
         return None
+    if card_id is not None:
+        _save_jp_image(r.text, card_id)
     soup = BeautifulSoup(r.text, "html.parser")
     update_area = soup.select_one("#update_list")
     rows = (update_area or soup).select(".t_row")
@@ -61,6 +71,29 @@ def fetch_printings(cid):
     return printings
 
 
+def _save_jp_image(page_html, card_id):
+    """從卡片頁抓官方日文卡圖並快取（已存在則跳過）。"""
+    jp_path = IMG_CACHE / f"{card_id}.jp.jpg"
+    if jp_path.exists():
+        return
+    m = GET_IMAGE_RE.search(page_html)
+    if not m:
+        return
+    try:
+        img = session.get(BASE + m.group(0).replace("&amp;", "&"), timeout=30,
+                          headers={"Referer": BASE + "card_search.action"})
+        # 官方圖可能是 JPEG 或 PNG，統一轉存 JPEG
+        if img.ok and img.content[:3] in (b"\xff\xd8\xff", b"\x89PN"):
+            import io
+
+            from PIL import Image
+            im = Image.open(io.BytesIO(img.content)).convert("RGB")
+            jp_path.parent.mkdir(parents=True, exist_ok=True)
+            im.save(jp_path, "JPEG", quality=92)
+    except Exception:
+        pass
+
+
 def get_printings(conn, card_id):
     """取收錄卡包（含快取）。回傳 list（可能為空）；來源異常回傳 None。"""
     fetched = conn.execute(
@@ -74,7 +107,7 @@ def get_printings(conn, card_id):
         "SELECT cid FROM ygo_cards WHERE id=?", (card_id,)).fetchone()
     if not row or not row["cid"]:
         return None
-    printings = fetch_printings(row["cid"])
+    printings = fetch_printings(row["cid"], card_id=card_id)
     if printings is None:
         return None  # 失敗不記快取，之後可重試
     conn.executemany(

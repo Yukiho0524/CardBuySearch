@@ -104,7 +104,7 @@ function cardEl(c) {
     <button ${inList ? "disabled" : ""}>${inList ? "已加入" : "＋ 加入清單"}</button>`;
   div.querySelector("button").addEventListener("click", (e) => {
     // 遊戲王預設日紙（台灣玩家主流），可在清單改成韓紙/英紙/不限
-    const item = { card: c, qty: 1, rarity: "",
+    const item = { card: c, qty: 1, rarity: "", art: "",
                    lang: c.game === "ygo" ? "日紙" : "", cardRarities: null };
     wishlist.set(keyOf(c), item);
     e.target.disabled = true;
@@ -147,8 +147,11 @@ function renderWishlist() {
       const lOpts = ['<option value="">紙種不限</option>',
         ...ygoOptions.langs.map((l) =>
           `<option value="${l}" ${item.lang === l ? "selected" : ""}>${l}</option>`)];
+      const aOpts = [["", "版本不限"], ["一般", "一般版"], ["超框", "超框/異圖"]]
+        .map(([v, t]) => `<option value="${v}" ${item.art === v ? "selected" : ""}>${t}</option>`);
       optsHtml = `<select class="opt rar">${rOpts.join("")}</select>
-                  <select class="opt lang">${lOpts.join("")}</select>`;
+                  <select class="opt lang">${lOpts.join("")}</select>
+                  <select class="opt art">${aOpts.join("")}</select>`;
     }
     li.innerHTML = `
       <img src="${c.image_url || ""}" alt="">
@@ -166,6 +169,8 @@ function renderWishlist() {
     if (rar) rar.addEventListener("change", (e) => { item.rarity = e.target.value; });
     const lang = li.querySelector(".lang");
     if (lang) lang.addEventListener("change", (e) => { item.lang = e.target.value; });
+    const art = li.querySelector(".art");
+    if (art) art.addEventListener("change", (e) => { item.art = e.target.value; });
     li.querySelector(".rm").addEventListener("click", () => {
       wishlist.delete(key);
       renderWishlist();
@@ -188,7 +193,7 @@ $("#compareBtn").addEventListener("click", async () => {
 
   const items = [...wishlist.values()].map((it) => ({
     game: it.card.game, card_id: it.card.id, qty: it.qty,
-    rarity: it.rarity || null, lang: it.lang || null,
+    rarity: it.rarity || null, lang: it.lang || null, art: it.art || null,
   }));
   let data;
   try {
@@ -210,7 +215,9 @@ const fmt = (n) => "NT$ " + Number(n).toLocaleString("zh-Hant-TW");
 const confLabel = { strong: "高：條件都符合", weak: "中：部分符合", maybe: "低：標題未標示" };
 
 function wantDesc(c) {
-  const bits = [c.collector_number, c.rarity, c.lang].filter(Boolean).join("・");
+  const artLabel = c.art === "超框" ? "超框/異圖" : c.art === "一般" ? "一般版" : null;
+  const bits = [c.collector_number, c.rarity, c.lang, artLabel]
+    .filter(Boolean).join("・");
   return `${bits}${bits ? " " : ""}×${c.qty}`;
 }
 
