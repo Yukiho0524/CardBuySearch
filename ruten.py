@@ -110,8 +110,9 @@ def expand_variants(names, cap=24):
 
 
 def _squash(s):
-    """比對用正規化：全形轉半形、大寫、去空白與間隔號。"""
-    return _norm(s).replace(" ", "").replace("·", "").replace("・", "")
+    """比對用正規化：全形轉半形、大寫、去空白/間隔號/連字號。"""
+    return (_norm(s).replace(" ", "").replace("·", "")
+            .replace("・", "").replace("-", ""))
 
 
 def search_products(query, limit=40):
@@ -271,7 +272,7 @@ def find_listings_for_ygo(names, rarity=None, lang=None, limit=40):
     紙種在標題比對階段過濾（字面優先，卡號 -JP/-KR/-EN 輔助）。
     """
     variants = expand_variants(names)          # 標題比對用（全部）
-    query_bases = expand_variants(names[:2])   # 查詢生成用（繁中主名＋台版官方譯名）
+    query_bases = expand_variants(names[:3])   # 查詢生成用（主名＋台版官方＋MD 譯名）
 
     def _segments_of(vs):
         """取卡名最後一段當人名段（「·」「・」或空白分隔）。"""

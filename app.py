@@ -77,7 +77,8 @@ def api_search():
             expand_variants([q, _s2tw.convert(q), _t2s.convert(q)], cap=10)))
         conds, params = [], []
         for form in q_forms:
-            for col in ("name_tc", "name_sc", "name_jp", "name_en", "name_cnocg"):
+            for col in ("name_tc", "name_sc", "name_jp", "name_en",
+                        "name_cnocg", "name_md"):
                 conds.append(f"{col} LIKE ?")
                 params.append(f"%{form}%")
         rows = [dict(r) for r in conn.execute(
@@ -204,9 +205,9 @@ def api_compare():
                 wants.append({
                     "key": f"ygo:{row['id']}", "game": "ygo", "card_id": row["id"],
                     "name": row["name_tc"],
-                    # 順序即查詢優先序：前兩個（繁中主名、台版官方譯名）用於
-                    # 露天查詢生成，全部用於標題比對
-                    "names": [row["name_tc"], row["name_cnocg"],
+                    # 順序即查詢優先序：前三個（繁中主名、台版官方、MD 譯名）
+                    # 用於露天查詢生成，全部用於標題比對
+                    "names": [row["name_tc"], row["name_cnocg"], row["name_md"],
                               row["name_sc"], row["name_jp"]],
                     "collector_number": None,
                     "rarity": (it.get("rarity") or None),
