@@ -69,12 +69,12 @@ body {
 
 .layout {
   display: grid;
-  grid-template-columns: 1fr 340px;
+  grid-template-columns: 1fr 430px;
   gap: 16px;
   padding: 16px;
   align-items: start;
 }
-@media (max-width: 900px) { .layout { grid-template-columns: 1fr; } }
+@media (max-width: 1000px) { .layout { grid-template-columns: 1fr; } }
 
 .panel {
   background: var(--panel);
@@ -94,10 +94,13 @@ body {
 }
 .game-tabs input { display: none; }
 
+.wishlist .opts { display: flex; gap: 6px; margin-top: 5px; }
 .wishlist select.opt {
-  padding: 3px 4px; border: 1px solid var(--border); border-radius: 5px;
-  font-size: .78rem; max-width: 86px; background: var(--input-bg); color: var(--ink);
+  flex: 1; min-width: 0;
+  padding: 4px 4px; border: 1px solid var(--border); border-radius: 5px;
+  font-size: .8rem; background: var(--input-bg); color: var(--ink);
 }
+.wishlist select.opt.rar { flex: 1.6; }  /* 稀有度選項文字較長，多分一點寬 */
 .game-icon { font-size: .72rem; padding: 0 5px; border-radius: 4px;
   background: #e0e7ff; color: #3730a3; }
 

@@ -384,7 +384,7 @@ function renderWishlist() {
     if (c.game === "ygo") {
       // 有官方收錄資料時，只列這張卡實際出過的稀有度
       const rarityList = item.cardRarities || ygoOptions.rarities;
-      const rOpts = [`<option value="">${item.cardRarities ? "稀有度?（此卡出過↓）" : "稀有度?"}</option>`,
+      const rOpts = [`<option value="">${item.cardRarities ? "稀有度（此卡出過）" : "稀有度?"}</option>`,
         ...rarityList.map((r) =>
           `<option value="${r}" ${item.rarity === r ? "selected" : ""}>${r}</option>`)];
       const lOpts = ['<option value="">紙種不限</option>',
@@ -392,15 +392,17 @@ function renderWishlist() {
           `<option value="${l}" ${item.lang === l ? "selected" : ""}>${l}</option>`)];
       const aOpts = [["", "版本不限"], ["一般", "一般版"], ["超框", "超框/異圖"]]
         .map(([v, t]) => `<option value="${v}" ${item.art === v ? "selected" : ""}>${t}</option>`);
-      optsHtml = `<select class="opt rar">${rOpts.join("")}</select>
-                  <select class="opt lang">${lOpts.join("")}</select>
-                  <select class="opt art">${aOpts.join("")}</select>`;
+      optsHtml = `<div class="opts">
+                    <select class="opt rar">${rOpts.join("")}</select>
+                    <select class="opt lang">${lOpts.join("")}</select>
+                    <select class="opt art">${aOpts.join("")}</select>
+                  </div>`;
     }
     li.innerHTML = `
       <img src="${c.image_url || ""}" alt="">
       <div class="winfo">
         <span class="game-icon">${GAME_LABEL[c.game]}</span> <b>${c.name}</b><br>
-        <small>${c.game === "ygo" ? (c.name_jp || "") : `${c.collector_number || ""} ${c.rarity ? "・" + c.rarity : ""}`}</small><br>
+        <small>${c.game === "ygo" ? (c.name_jp || "") : `${c.collector_number || ""} ${c.rarity ? "・" + c.rarity : ""}`}</small>
         ${optsHtml}
       </div>
       <input class="qty" type="number" min="1" max="9" value="${item.qty}">
