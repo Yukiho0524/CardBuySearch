@@ -45,21 +45,24 @@ RARITY_ALIASES = {
     "TR": ["TR"],
 }
 
-# 遊戲王稀有度（OCG）：標準標籤 → 標題常見寫法（含台灣行話）
+# 遊戲王稀有度（OCG）：標準標籤 → 標題常見寫法（台灣行話，經露天實證）
+# 每組第一個非英文詞＝主要俗稱，會拿去當露天查詢詞
 YGO_RARITIES = {
     "N": ["N", "普卡", "平卡", "普通"],
     "R": ["R", "銀字"],
+    "NPR": ["NPR", "NP", "普鑽", "彩鑽"],       # 普卡平行閃（20AP/PAC1 等）
     "SR": ["SR", "亮面"],
     "UR": ["UR", "金亮", "金字"],
-    "SEC": ["SEC", "SE", "SER", "鑽石"],
+    "SEC": ["SEC", "半鑽", "SE", "SER", "斜鑽", "鑽石"],
+    "EXSEC": ["EXSEC", "全鑽", "EXSE", "ESR", "EX鑽"],
     "UTR": ["UTR", "浮雕"],
-    "EXSEC": ["EXSEC", "EX鑽"],
     "CR": ["CR", "雕鑽", "雕面"],
     "HR": ["HR", "雷射"],
-    "20th": ["20TH", "20th", "紅鑽", "二十"],
-    "PGR": ["PGR", "PG", "金鑽"],
-    "QCSE": ["QCSE", "25TH", "25th", "QC", "銀鑽"],
-    "PSER": ["PSER", "白鑽"],
+    "GR": ["GR"],                                # 黃金（「黃金」不入典：黃金卿等卡名誤中）
+    "20th": ["20TH", "紅鑽", "20th", "二十"],
+    "QCSE": ["QCSE", "金鑽", "QCSER", "QCSR", "25TH", "25th", "QC"],
+    "PSER": ["PSER", "白鑽", "PSE"],
+    "PGR": ["PGR", "PG"],
 }
 
 # 紙種（發行語言）：標籤 → 標題常見寫法；卡號中的 -KR/-EN/-SC 另以 regex 判斷
@@ -322,21 +325,28 @@ def find_listings_for_ygo(names, rarity=None, lang=None, limit=40, codes=None,
     #   單段短卡名 → 加「遊戲王」前綴避免撞到別的商品
     #   人名段查詢保證有配額（擴大召回，靠標題比對把關）
     zh_bases = [v for v in query_bases if not _KANA_RE.search(v)]
+    # 稀有度查詢詞：代號＋主要中文俗稱（賣家常只寫「金鑽」不寫 QCSE）
+    r_terms = [None]
+    if rarity:
+        aliases = YGO_RARITIES.get(rarity, [rarity])
+        slang = next((a for a in aliases if not a.isascii()), None)
+        r_terms = [rarity] + ([slang] if slang else [])
     name_queries, seg_queries = [], []
     for v in zh_bases:
         flat = re.sub(r"[·・\s]+", " ", v).strip()
-        if rarity:
-            name_queries.append(f"{flat} {rarity}")
-        elif " " in flat or len(flat) >= 5:
-            name_queries.append(flat)
-        else:
-            name_queries.append(f"遊戲王 {flat}")
+        for t in r_terms:
+            if t:
+                name_queries.append(f"{flat} {t}")
+            elif " " in flat or len(flat) >= 5:
+                name_queries.append(flat)
+            else:
+                name_queries.append(f"遊戲王 {flat}")
     for s in _segments_of(zh_bases)[:2]:
         seg_queries.append(f"{s} {rarity}" if rarity else f"遊戲王 {s}")
     code_queries = [c for c in (codes or [])][:2]  # 卡號查詢優先、精準度最高
-    n_name = 2 if seg_queries else 4
+    n_name = 3 if seg_queries else 4
     queries = list(dict.fromkeys(
-        code_queries + name_queries[:n_name] + seg_queries))[:5]
+        code_queries + name_queries[:n_name] + seg_queries))[:6]
 
     seen_ids, results = set(), []
     for q in queries:

@@ -29,6 +29,7 @@ RARITY_MAP = {
     "SE": "SEC", "EXSE": "EXSEC", "20THSE": "20th", "QCSE": "QCSE",
     "PSE": "PSER", "UL": "UTR", "CR": "CR", "HR": "HR",
     "PG": "PGR",               # プレミアムゴールドレア
+    "GR": "GR",                # ゴールドレア（黃金）
     "M": "MR", "MSE": "MSEC",  # ミレニアム系（少見，保留原樣顯示）
     "NP": "NPR", "P": "PR",    # パラレル系
     "KC": "KC",
