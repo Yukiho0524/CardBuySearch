@@ -24,6 +24,10 @@
 
 ## 安裝與啟動
 
+最簡單：**雙擊 `start.bat`**——自動檢查套件（缺才安裝）、啟動網站並開啟瀏覽器。
+
+手動：
+
 ```
 python -m pip install -r requirements.txt
 python app.py          # → http://localhost:5000
