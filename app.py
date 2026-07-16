@@ -25,6 +25,13 @@ _s2tw = OpenCC("s2twp")  # 讓使用者貼簡中也能搜到繁中卡名
 IMG_CACHE = Path(__file__).parent / "data" / "img_cache"
 YGO_IMG_URL = "https://images.ygoprodeck.com/images/cards/{id}.jpg"
 
+
+def ygo_img_url(card_id):
+    """日文圖就緒時網址帶 ?v=jp——讓瀏覽器略過先前快取的英文圖。"""
+    if (IMG_CACHE / "ygo" / f"{card_id}.jp.jpg").exists():
+        return f"/img/ygo/{card_id}?v=jp"
+    return f"/img/ygo/{card_id}"
+
 CONFIDENCE_ORDER = {"strong": 0, "weak": 1, "maybe": 2}
 
 # 露天查詢結果快取（10 分鐘），避免重複比價時高頻打露天
@@ -141,7 +148,7 @@ def search_ygo(conn, q, limit=60):
             "id": r["id"], "game": "ygo", "name": r["name_tc"],
             "name_jp": r["name_jp"], "types": r["types"],
             "collector_number": None, "rarity": None,
-            "image_url": f"/img/ygo/{r['id']}",
+            "image_url": ygo_img_url(r["id"]),
         })
     return cards
 
@@ -220,7 +227,7 @@ def api_search_by_image():
                 cards.append({
                     "id": row["id"], "game": "ygo", "name": row["name_tc"],
                     "name_jp": row["name_jp"], "collector_number": None,
-                    "rarity": None, "image_url": f"/img/ygo/{row['id']}",
+                    "rarity": None, "image_url": ygo_img_url(row["id"]),
                     "distance": d,
                 })
         else:
@@ -281,7 +288,7 @@ def api_cards():
                 cards.append({
                     "id": r["id"], "game": "ygo", "name": r["name_tc"],
                     "name_jp": r["name_jp"], "collector_number": None,
-                    "rarity": None, "image_url": f"/img/ygo/{r['id']}"})
+                    "rarity": None, "image_url": ygo_img_url(r["id"])})
         else:
             r = conn.execute("SELECT * FROM cards WHERE id=?", (cid,)).fetchone()
             if r:
@@ -382,7 +389,7 @@ def api_import_deck():
             if row:
                 add({"id": row["id"], "game": "ygo", "name": row["name_tc"],
                      "name_jp": row["name_jp"], "collector_number": None,
-                     "rarity": None, "image_url": f"/img/ygo/{row['id']}"}, 1)
+                     "rarity": None, "image_url": ygo_img_url(row["id"])}, 1)
             else:
                 unmatched.append(line)
             continue
@@ -646,7 +653,7 @@ def api_compare():
         "wishlist": [{**want_info(w), "history": w["history"],
                       "history_series": w["history_series"],
                       "market": w["market"],
-                      "image_url": f"/img/{w['game']}/{w['card_id']}"}
+                      "image_url": (ygo_img_url(w["card_id"]) if w["game"] == "ygo" else f"/img/pkm/{w['card_id']}")}
                      for w in wants],
         "sellers": seller_results[:20],
         "pair": pair_best,
