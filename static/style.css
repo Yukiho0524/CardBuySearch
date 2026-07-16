@@ -188,6 +188,8 @@ button.primary:not(:disabled):hover { background: var(--accent-dark); }
   display: flex; align-items: center; justify-content: center;
   padding: 20px;
 }
+/* display:flex 會蓋過 HTML hidden 屬性的 display:none，必須明確補上 */
+.modal-backdrop[hidden] { display: none; }
 .modal {
   position: relative;
   background: var(--panel);
