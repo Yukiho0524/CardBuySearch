@@ -5,9 +5,14 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CardBuySearch — 缺卡湊齊比價</title>
   <link rel="stylesheet" href="style.css">
+  <script>/* 開頁即套用主題，避免閃白 */
+    if (localStorage.getItem("cbs_theme") === "dark")
+      document.documentElement.dataset.theme = "dark";
+  </script>
 </head>
 <body>
   <header class="topbar">
+    <button id="themeToggle" class="theme-toggle" title="切換深色/淺色模式">🌙</button>
     <h1>🃏 CardBuySearch</h1>
     <p class="tagline">找出能一次買齊你缺卡的賣家 — 寶可夢繁中 × 露天拍賣</p>
   </header>

@@ -3,14 +3,44 @@
 :root {
   --bg: #f4f5f7;
   --panel: #ffffff;
+  --panel-sub: #fafbfc;   /* 卡片格/賣家區塊等次層底色 */
+  --chip: #eef0f4;        /* 徽章、圓形按鈕底色 */
+  --input-bg: #ffffff;
+  --img-bg: #eeeeee;
+  --modal-img-bg: #f0f1f5;
   --ink: #1f2430;
   --muted: #6b7280;
   --accent: #d63b2f;
   --accent-dark: #b02f25;
   --ok: #157f3d;
+  --ok-bg: #f2fbf5;       /* 全齊賣家底色 */
   --warn: #b45309;
+  --link: #1d4ed8;
+  --pair-bg: #faf8ff;     /* 雙賣家組合底色 */
   --border: #e2e5ea;
+  --btn-ink: #2b3350;     /* 深色實心按鈕/徽章 */
   --radius: 10px;
+}
+
+html[data-theme="dark"] {
+  --bg: #14161d;
+  --panel: #1d2129;
+  --panel-sub: #232833;
+  --chip: #2b3140;
+  --input-bg: #171a22;
+  --img-bg: #2a2f3a;
+  --modal-img-bg: #14161d;
+  --ink: #e5e8f0;
+  --muted: #99a1b3;
+  --accent: #e05648;
+  --accent-dark: #c4453a;
+  --ok: #43c274;
+  --ok-bg: #16281d;
+  --warn: #dfa14e;
+  --link: #8ab0ff;
+  --pair-bg: #241f33;
+  --border: #363c4a;
+  --btn-ink: #3a4468;
 }
 
 body {
@@ -24,7 +54,16 @@ body {
   background: linear-gradient(135deg, #2b3350, #1f2430);
   color: #fff;
   padding: 20px 28px;
+  position: relative;
 }
+.theme-toggle {
+  position: absolute; top: 18px; right: 24px;
+  width: 40px; height: 40px; border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, .25);
+  background: rgba(255, 255, 255, .08); color: #fff;
+  font-size: 1.1rem; cursor: pointer;
+}
+.theme-toggle:hover { background: rgba(255, 255, 255, .18); }
 .topbar h1 { font-size: 1.5rem; }
 .tagline { color: #c6cbe0; font-size: .9rem; }
 
@@ -48,16 +87,16 @@ body {
 .game-tabs { display: flex; gap: 14px; margin-bottom: 10px; font-size: .9rem; }
 .game-tabs label {
   cursor: pointer; padding: 5px 12px; border: 1px solid var(--border);
-  border-radius: 999px; background: #fafbfc;
+  border-radius: 999px; background: var(--panel-sub);
 }
 .game-tabs label:has(input:checked) {
-  background: var(--ink); color: #fff; border-color: var(--ink);
+  background: var(--btn-ink); color: #fff; border-color: var(--btn-ink);
 }
 .game-tabs input { display: none; }
 
 .wishlist select.opt {
   padding: 3px 4px; border: 1px solid var(--border); border-radius: 5px;
-  font-size: .78rem; max-width: 86px;
+  font-size: .78rem; max-width: 86px; background: var(--input-bg); color: var(--ink);
 }
 .game-icon { font-size: .72rem; padding: 0 5px; border-radius: 4px;
   background: #e0e7ff; color: #3730a3; }
@@ -66,13 +105,13 @@ body {
 .search-controls input {
   flex: 1; min-width: 200px;
   padding: 9px 12px; border: 1px solid var(--border); border-radius: 8px;
-  font-size: .95rem;
+  font-size: .95rem; background: var(--input-bg); color: var(--ink);
 }
 .search-controls select, .search-controls button {
   padding: 9px 14px; border: 1px solid var(--border); border-radius: 8px;
-  background: #fff; font-size: .9rem; cursor: pointer;
+  background: var(--input-bg); color: var(--ink); font-size: .9rem; cursor: pointer;
 }
-.search-controls button { background: var(--ink); color: #fff; border: none; }
+.search-controls button { background: var(--btn-ink); color: #fff; border: none; }
 
 .card-grid {
   display: grid;
@@ -81,9 +120,9 @@ body {
 }
 .card-item {
   border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
-  background: #fafbfc; text-align: center; font-size: .8rem;
+  background: var(--panel-sub); text-align: center; font-size: .8rem;
 }
-.card-item img { width: 100%; aspect-ratio: 63/88; object-fit: contain; background: #eee; }
+.card-item img { width: 100%; aspect-ratio: 63/88; object-fit: contain; background: var(--img-bg); }
 .card-click { cursor: zoom-in; }
 .card-click:hover img { filter: brightness(1.06); }
 .card-item .meta { padding: 6px 8px; }
@@ -102,14 +141,15 @@ body {
 }
 
 .import-box { margin-bottom: 10px; font-size: .85rem; }
-.import-box summary { cursor: pointer; color: #1d4ed8; }
+.import-box summary { cursor: pointer; color: var(--link); }
 .import-box textarea {
   width: 100%; margin: 6px 0; padding: 8px;
   border: 1px solid var(--border); border-radius: 8px; font-size: .85rem;
+  background: var(--input-bg); color: var(--ink);
 }
 .import-box button {
   padding: 6px 16px; border: none; border-radius: 6px;
-  background: var(--ink); color: #fff; cursor: pointer;
+  background: var(--btn-ink); color: #fff; cursor: pointer;
 }
 .import-hint { color: var(--muted); font-size: .78rem; margin: 4px 0; }
 
@@ -120,7 +160,8 @@ body {
 }
 .wishlist img { width: 34px; border-radius: 3px; }
 .wishlist .winfo { flex: 1; }
-.wishlist .qty { width: 46px; padding: 3px; border: 1px solid var(--border); border-radius: 5px; }
+.wishlist .qty { width: 46px; padding: 3px; border: 1px solid var(--border); border-radius: 5px;
+  background: var(--input-bg); color: var(--ink); }
 .wishlist .rm { background: none; border: none; color: var(--muted); cursor: pointer; font-size: 1rem; }
 .badge {
   background: var(--accent); color: #fff; border-radius: 999px;
@@ -134,7 +175,7 @@ button.primary {
 button.primary:disabled { background: #c9ccd3; cursor: default; }
 .share-btn {
   width: 100%; margin-top: 8px; padding: 8px; font-size: .85rem;
-  background: #fff; color: var(--ink); border: 1px solid var(--border);
+  background: var(--panel); color: var(--ink); border: 1px solid var(--border);
   border-radius: 8px; cursor: pointer;
 }
 button.primary:not(:disabled):hover { background: var(--accent-dark); }
@@ -144,9 +185,9 @@ button.primary:not(:disabled):hover { background: var(--accent-dark); }
 
 .seller-block {
   border: 1px solid var(--border); border-radius: var(--radius);
-  padding: 14px 16px; margin-bottom: 14px; background: #fafbfc;
+  padding: 14px 16px; margin-bottom: 14px; background: var(--panel-sub);
 }
-.seller-block.complete { border-color: var(--ok); background: #f2fbf5; }
+.seller-block.complete { border-color: var(--ok); background: var(--ok-bg); }
 .seller-head { display: flex; flex-wrap: wrap; gap: 10px; align-items: baseline; margin-bottom: 8px; }
 .seller-head .cov { font-weight: 700; }
 .seller-head .cov.full { color: var(--ok); }
@@ -159,7 +200,7 @@ button.primary:not(:disabled):hover { background: var(--accent-dark); }
   text-align: left; padding: 5px 8px; border-bottom: 1px solid var(--border);
 }
 .listing-table th { color: var(--muted); font-weight: 400; }
-.listing-table a { color: #1d4ed8; text-decoration: none; }
+.listing-table a { color: var(--link); text-decoration: none; }
 .listing-table a:hover { text-decoration: underline; }
 .conf { font-size: .72rem; padding: 0 6px; border-radius: 4px; }
 .conf.strong { background: #d8f3e1; color: #14532d; }
@@ -176,10 +217,10 @@ button.primary:not(:disabled):hover { background: var(--accent-dark); }
 .diff-note { color: var(--muted); font-size: .78rem; }
 .mkt { color: var(--muted); white-space: nowrap; }
 .spark { vertical-align: -4px; margin-left: 4px; }
-.credit { color: #b45309; font-size: .78rem; }
+.credit { color: var(--warn); font-size: .78rem; }
 
 .split-block { border: 2px dashed #94a3b8; }
-.pair-block { border: 2px solid #7c3aed; background: #faf8ff; }
+.pair-block { border: 2px solid #7c3aed; background: var(--pair-bg); }
 
 /* ---------- 卡片詳情彈窗 ---------- */
 .modal-backdrop {
@@ -202,14 +243,14 @@ button.primary:not(:disabled):hover { background: var(--accent-dark); }
 .modal-close {
   position: absolute; top: 10px; right: 12px; z-index: 2;
   width: 32px; height: 32px; border-radius: 50%;
-  border: none; background: #eef0f4; color: var(--muted);
+  border: none; background: var(--chip); color: var(--muted);
   font-size: 1rem; cursor: pointer;
 }
 .modal-close:hover { background: var(--accent); color: #fff; }
 .modal-body { display: grid; grid-template-columns: 320px 1fr; }
 @media (max-width: 720px) { .modal-body { grid-template-columns: 1fr; } }
 .modal-img {
-  background: #f0f1f5; display: flex;
+  background: var(--modal-img-bg); display: flex;
   align-items: flex-start; justify-content: center; padding: 22px;
 }
 .modal-img img {
@@ -222,10 +263,10 @@ button.primary:not(:disabled):hover { background: var(--accent-dark); }
 .modal-sub { color: var(--muted); font-size: .85rem; margin-bottom: 12px; }
 .badge-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
 .badge-chip {
-  background: #eef0f4; color: var(--ink);
+  background: var(--chip); color: var(--ink);
   border-radius: 6px; padding: 2px 10px; font-size: .8rem;
 }
-.badge-chip.stat { background: #2b3350; color: #fff; }
+.badge-chip.stat { background: var(--btn-ink); color: #fff; }
 .modal-section { margin-bottom: 16px; }
 .modal-section h4 {
   font-size: .8rem; color: var(--muted); font-weight: 400;
@@ -234,7 +275,7 @@ button.primary:not(:disabled):hover { background: var(--accent-dark); }
 }
 .card-effect {
   font-size: .88rem; line-height: 1.75; white-space: pre-wrap;
-  background: #fafbfc; border: 1px solid var(--border);
+  background: var(--panel-sub); border: 1px solid var(--border);
   border-radius: 8px; padding: 12px 14px;
 }
 .printings-table { width: 100%; border-collapse: collapse; font-size: .82rem; }
@@ -249,7 +290,7 @@ button.primary:not(:disabled):hover { background: var(--accent-dark); }
   border: 1px solid var(--border);
 }
 .variant-list li a:hover { border-color: var(--accent); }
-.variant-list li.current a { background: #fff4f2; border-color: var(--accent); }
+.variant-list li.current a { background: var(--chip); border-color: var(--accent); }
 .modal-actions { margin-top: 18px; display: flex; gap: 10px; }
 .modal-actions .add {
   flex: 1; padding: 11px; font-size: .95rem; font-weight: 700;
@@ -259,7 +300,7 @@ button.primary:not(:disabled):hover { background: var(--accent-dark); }
 .modal-actions .add:disabled { background: #c9ccd3; cursor: default; }
 .modal-actions .official {
   padding: 11px 16px; font-size: .85rem; border: 1px solid var(--border);
-  border-radius: 8px; background: #fff; color: #1d4ed8;
+  border-radius: 8px; background: var(--panel); color: var(--link);
   text-decoration: none; display: flex; align-items: center;
 }
 

@@ -29,6 +29,18 @@ loadRarities();
 loadYgoOptions();
 restoreWishlist();
 
+// ---------- 深色模式開關 ----------
+function applyTheme(dark) {
+  document.documentElement.dataset.theme = dark ? "dark" : "";
+  $("#themeToggle").textContent = dark ? "☀️" : "🌙";
+  localStorage.setItem("cbs_theme", dark ? "dark" : "light");
+}
+$("#themeToggle").addEventListener("click", () =>
+  applyTheme(document.documentElement.dataset.theme !== "dark"));
+// 開頁腳本已先套過 data-theme，這裡同步按鈕圖示
+$("#themeToggle").textContent =
+  document.documentElement.dataset.theme === "dark" ? "☀️" : "🌙";
+
 document.querySelectorAll('input[name="game"]').forEach((el) =>
   el.addEventListener("change", () => {
     const ygo = currentGame() === "ygo";
