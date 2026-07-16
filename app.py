@@ -182,6 +182,109 @@ def api_search():
     return jsonify({"cards": cards})
 
 
+_ygo_races = None  # 種族清單（從 types 解析一次後快取）
+
+
+@app.get("/api/browse-options")
+def api_browse_options():
+    """全卡一覽的篩選選項。"""
+    game = request.args.get("game", "pkm")
+    conn = get_conn()
+    if game == "ygo":
+        global _ygo_races
+        if _ygo_races is None:
+            races = set()
+            for r in conn.execute(
+                    "SELECT types FROM ygo_cards WHERE types LIKE '[怪獸%'"):
+                m = re.search(r"\]\s*([^/\n]+)/", r["types"] or "")
+                if m:
+                    races.add(m.group(1).strip())
+            _ygo_races = sorted(races)
+        out = {
+            "categories": ["怪獸", "魔法", "陷阱"],
+            "subtypes": ["通常", "效果", "儀式", "融合", "同調", "超量",
+                         "連結", "靈擺", "調整", "特殊召喚",
+                         "速攻", "永續", "場地", "裝備", "反擊"],
+            "attrs": ["光", "暗", "炎", "水", "地", "風", "神"],
+            "races": _ygo_races,
+        }
+    else:
+        out = {
+            "kinds": ["基礎", "1階進化", "2階進化", "其他", "訓練家·能量"],
+            "sets": [r[0] for r in conn.execute(
+                "SELECT DISTINCT set_alpha FROM cards WHERE set_alpha IS NOT NULL "
+                "ORDER BY set_alpha DESC")],
+            "rarities": [r[0] for r in conn.execute(
+                "SELECT DISTINCT rarity FROM cards WHERE rarity IS NOT NULL "
+                "AND detail_fetched=1 ORDER BY rarity")],
+        }
+    conn.close()
+    return jsonify(out)
+
+
+@app.get("/api/browse")
+def api_browse():
+    """全卡一覽（篩選＋分頁，每頁 60 張、新卡在前）。"""
+    game = request.args.get("game", "pkm")
+    offset = max(0, int(request.args.get("offset", 0)))
+    conn = get_conn()
+    if game == "ygo":
+        conds, params = [], []
+        cat = request.args.get("cat")
+        if cat:
+            conds.append("types LIKE ?")
+            params.append(f"[{cat}%")
+        sub = request.args.get("sub")
+        if sub:  # 細分類在第一個中括號內，用 |分隔
+            conds.append("(types LIKE ? OR types LIKE ?)")
+            params += [f"%|{sub}|%", f"%|{sub}]%"]
+        attr = request.args.get("attr")
+        if attr:  # 屬性格式「種族/屬性」後接換行或字串結尾
+            conds.append("(types LIKE ? OR types LIKE ?)")
+            params += [f"%/{attr}\n%", f"%/{attr}"]
+        race = request.args.get("race")
+        if race:  # 種族格式「] 種族/」
+            conds.append("types LIKE ?")
+            params.append(f"%] {race}/%")
+        where = ("WHERE " + " AND ".join(conds)) if conds else ""
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM ygo_cards {where}", params).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT * FROM ygo_cards {where} ORDER BY cid DESC LIMIT 60 OFFSET ?",
+            params + [offset]).fetchall()
+        cards = [{
+            "id": r["id"], "game": "ygo", "name": r["name_tc"],
+            "name_jp": r["name_jp"], "collector_number": None, "rarity": None,
+            "image_url": ygo_img_url(r["id"]),
+        } for r in rows]
+    else:
+        conds, params = ["detail_fetched=1"], []
+        kind = request.args.get("kind")
+        if kind == "訓練家·能量":
+            conds.append("evolve_marker IS NULL")
+        elif kind:
+            conds.append("evolve_marker = ?")
+            params.append(kind)
+        set_alpha = request.args.get("set")
+        if set_alpha:
+            conds.append("set_alpha = ?")
+            params.append(set_alpha)
+        rarity = request.args.get("rarity")
+        if rarity:
+            conds.append("rarity = ?")
+            params.append(rarity)
+        where = "WHERE " + " AND ".join(conds)
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM cards {where}", params).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT * FROM cards {where} ORDER BY id DESC LIMIT 60 OFFSET ?",
+            params + [offset]).fetchall()
+        cards = [{**dict(r), "game": "pkm", "image_url": f"/img/pkm/{r['id']}"}
+                 for r in rows]
+    conn.close()
+    return jsonify({"total": total, "offset": offset, "cards": cards})
+
+
 @app.post("/api/search-by-image")
 def api_search_by_image():
     """圖片搜尋：上傳卡片照片，以感知雜湊找最相近的卡。

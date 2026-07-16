@@ -30,8 +30,11 @@
         <select id="raritySelect"><option value="">全部稀有度</option></select>
         <button id="searchBtn">搜尋</button>
         <button id="imgSearchBtn" title="上傳卡片照片以圖搜卡（請盡量裁到只剩卡片）">📷 以圖搜卡</button>
+        <button id="browseBtn" title="瀏覽全部卡片並用條件篩選">📖 全部卡片</button>
         <input id="imgInput" type="file" accept="image/*" hidden>
       </div>
+      <div id="filterBar" class="filter-bar" hidden></div>
+      <p id="browseCount" class="import-hint" hidden></p>
       <div id="searchResults" class="card-grid"></div>
     </section>
 

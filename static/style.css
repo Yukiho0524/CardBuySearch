@@ -116,6 +116,27 @@ body {
 }
 .search-controls button { background: var(--btn-ink); color: #fff; border: none; }
 
+.filter-bar {
+  display: flex; flex-wrap: wrap; gap: 8px;
+  padding: 10px 12px; margin-bottom: 12px;
+  background: var(--panel-sub); border: 1px solid var(--border);
+  border-radius: 8px;
+}
+.filter-bar select {
+  padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--input-bg); color: var(--ink); font-size: .85rem;
+}
+.filter-bar .clear-filters {
+  padding: 6px 12px; border: 1px solid var(--border); border-radius: 6px;
+  background: var(--input-bg); color: var(--muted); font-size: .85rem; cursor: pointer;
+}
+.load-more {
+  grid-column: 1 / -1; padding: 10px; margin-top: 4px;
+  border: 1px dashed var(--border); border-radius: 8px;
+  background: var(--panel-sub); color: var(--link);
+  font-size: .9rem; cursor: pointer;
+}
+
 .card-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));

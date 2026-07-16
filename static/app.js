@@ -49,10 +49,12 @@ document.querySelectorAll('input[name="game"]').forEach((el) =>
       ? "卡名（例：灰流麗、増殖するG，中日文皆可）"
       : "卡名或編號（例：噴火龍、094/081）";
     $("#searchResults").innerHTML = "";
+    stopBrowse();
   }));
 
 // ---------- 搜尋 ----------
 async function doSearch() {
+  stopBrowse();
   const q = $("#searchInput").value.trim();
   const game = currentGame();
   const rarity = game === "pkm" ? $("#raritySelect").value : "";
@@ -71,11 +73,77 @@ async function doSearch() {
 $("#searchBtn").addEventListener("click", doSearch);
 $("#searchInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
 
+// ---------- 全部卡片一覽（篩選＋分頁） ----------
+let browseState = null; // {game, filters, offset, total} 非 null 表示一覽模式
+
+const FILTER_DEFS = {
+  pkm: [["kind", "種類", "kinds"], ["set", "系列", "sets"], ["rarity", "稀有度", "rarities"]],
+  ygo: [["cat", "類別", "categories"], ["sub", "細分類", "subtypes"],
+        ["attr", "屬性", "attrs"], ["race", "種族", "races"]],
+};
+
+$("#browseBtn").addEventListener("click", () => startBrowse());
+
+async function startBrowse() {
+  const game = currentGame();
+  const res = await fetch(`/api/browse-options?game=${game}`);
+  const opts = await res.json();
+  const bar = $("#filterBar");
+  bar.innerHTML = FILTER_DEFS[game].map(([key, label, optKey]) => `
+    <select data-fkey="${key}">
+      <option value="">全部${label}</option>
+      ${(opts[optKey] || []).map((v) => `<option value="${v}">${v}</option>`).join("")}
+    </select>`).join("") +
+    '<button class="clear-filters">清除條件</button>';
+  bar.hidden = false;
+  bar.querySelectorAll("select").forEach((s) =>
+    s.addEventListener("change", () => loadBrowse(0)));
+  bar.querySelector(".clear-filters").addEventListener("click", () => {
+    bar.querySelectorAll("select").forEach((s) => { s.value = ""; });
+    loadBrowse(0);
+  });
+  browseState = { game, offset: 0 };
+  loadBrowse(0);
+}
+
+function stopBrowse() {
+  browseState = null;
+  $("#filterBar").hidden = true;
+  $("#browseCount").hidden = true;
+}
+
+async function loadBrowse(offset) {
+  const game = browseState.game;
+  const params = new URLSearchParams({ game, offset });
+  $("#filterBar").querySelectorAll("select").forEach((s) => {
+    if (s.value) params.set(s.dataset.fkey, s.value);
+  });
+  const grid = $("#searchResults");
+  if (offset === 0) grid.innerHTML = '<p class="empty"><span class="spinner"></span>載入中…</p>';
+  const res = await fetch(`/api/browse?${params}`);
+  const data = await res.json();
+  if (offset === 0) grid.innerHTML = "";
+  else { const btn = grid.querySelector(".load-more"); if (btn) btn.remove(); }
+  for (const c of data.cards) grid.appendChild(cardEl(c));
+  const shown = offset + data.cards.length;
+  $("#browseCount").hidden = false;
+  $("#browseCount").textContent = `符合條件 ${data.total} 張，已顯示 ${shown} 張`;
+  if (shown < data.total) {
+    const more = document.createElement("button");
+    more.className = "load-more";
+    more.textContent = `載入更多（還有 ${data.total - shown} 張）`;
+    more.addEventListener("click", () => loadBrowse(shown));
+    grid.appendChild(more);
+  }
+  browseState.offset = shown;
+}
+
 // ---------- 以圖搜卡 ----------
 $("#imgSearchBtn").addEventListener("click", () => $("#imgInput").click());
 $("#imgInput").addEventListener("change", async (e) => {
   const file = e.target.files[0];
   if (!file) return;
+  stopBrowse();
   const grid = $("#searchResults");
   grid.innerHTML = '<p class="empty"><span class="spinner"></span>比對圖片中…</p>';
   const fd = new FormData();
