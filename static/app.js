@@ -96,13 +96,17 @@ function cardEl(c) {
     ? `${c.name_jp || ""}`
     : `${c.set_alpha || ""} ${c.collector_number || ""}`;
   div.innerHTML = `
-    <img src="${c.image_url || ""}" alt="${c.name || ""}">
-    <div class="meta">
-      <span class="name">${c.name || "（未知）"}</span>
-      <span class="sub">${sub}</span>
-      ${c.rarity ? `<span class="rarity-tag">${c.rarity}</span>` : ""}
+    <div class="card-click" title="查看卡片詳情">
+      <img src="${c.image_url || ""}" alt="${c.name || ""}">
+      <div class="meta">
+        <span class="name">${c.name || "（未知）"}</span>
+        <span class="sub">${sub}</span>
+        ${c.rarity ? `<span class="rarity-tag">${c.rarity}</span>` : ""}
+      </div>
     </div>
     <button ${inList ? "disabled" : ""}>${inList ? "已加入" : "＋ 加入清單"}</button>`;
+  div.querySelector(".card-click").addEventListener("click", () =>
+    openCardModal(c.game, c.id));
   div.querySelector("button").addEventListener("click", (e) => {
     // 遊戲王預設日紙（台灣玩家主流），可在清單改成韓紙/英紙/不限
     const item = { card: c, qty: 1, rarity: "", art: "",
@@ -129,6 +133,135 @@ async function loadCardRarities(key, cardId) {
       renderWishlist();
     }
   } catch (e) { /* 查不到就維持完整選單 */ }
+}
+
+// ---------- 卡片詳情彈窗 ----------
+const modal = $("#cardModal");
+
+function closeModal() { modal.hidden = true; }
+modal.addEventListener("click", (e) => { if (e.target === modal) closeModal(); });
+modal.querySelector(".modal-close").addEventListener("click", closeModal);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !modal.hidden) closeModal();
+});
+
+async function openCardModal(game, cardId) {
+  modal.hidden = false;
+  $("#modalImg").src = "";
+  $("#modalInfo").innerHTML = '<p class="empty"><span class="spinner"></span>載入中…</p>';
+  let d;
+  try {
+    const res = await fetch(`/api/card/${game}/${cardId}`);
+    if (!res.ok) throw new Error("讀取失敗");
+    d = await res.json();
+  } catch (err) {
+    $("#modalInfo").innerHTML = `<p class="empty">${err.message}</p>`;
+    return;
+  }
+  $("#modalImg").src = d.image_url;
+  $("#modalInfo").innerHTML = d.game === "ygo" ? ygoDetailHtml(d) : pkmDetailHtml(d);
+  bindModalActions(d);
+}
+
+function esc(s) {
+  return (s || "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+function ygoDetailHtml(d) {
+  // types 格式：「[怪獸|效果|調整] 不死/炎\n[★3] 0/1800」→ 拆成徽章
+  const chips = [];
+  const types = d.types || "";
+  const cat = types.match(/\[([^\]]+)\]/);
+  if (cat) for (const t of cat[1].split("|")) chips.push(`<span class="badge-chip">${esc(t)}</span>`);
+  const raceAttr = types.match(/\]\s*([^\n\[]+)/);
+  if (raceAttr && raceAttr[1].trim()) chips.push(`<span class="badge-chip">${esc(raceAttr[1].trim())}</span>`);
+  const lv = types.match(/\[(★|☆|R|L)([0-9]+)\]/);
+  if (lv) chips.push(`<span class="badge-chip stat">${lv[1] === "L" ? "LINK-" : lv[1]}${lv[2]}</span>`);
+  const stats = types.match(/(-?\d+|\?)\/(-?\d+|\?)\s*$/m);
+  if (stats) chips.push(`<span class="badge-chip stat">ATK ${stats[1]}／DEF ${stats[2]}</span>`);
+
+  const otherNames = [d.name_jp, d.name_en, d.name_cnocg && d.name_cnocg !== d.name ? `台譯：${d.name_cnocg}` : null]
+    .filter(Boolean).map(esc).join("　·　");
+
+  const printRows = (d.printings || []).map((p) => `
+    <tr><td>${esc(p.release || "")}</td><td>${esc(p.code || "")}</td>
+        <td>${p.rarity ? `<span class="rarity-tag">${esc(p.rarity)}</span>` : ""}</td>
+        <td>${esc(p.pack || "")}</td></tr>`).join("");
+
+  return `
+    <h2>${esc(d.name)}</h2>
+    <p class="modal-sub">${otherNames}</p>
+    <div class="badge-row">${chips.join("")}</div>
+    ${d.pend_text ? `<div class="modal-section"><h4>靈擺效果</h4>
+      <div class="card-effect">${esc(d.pend_text)}</div></div>` : ""}
+    <div class="modal-section"><h4>效果</h4>
+      <div class="card-effect">${esc(d.card_text) || "（無資料）"}</div></div>
+    ${printRows ? `<div class="modal-section"><h4>收錄卡包（${d.printings.length}）</h4>
+      <div style="max-height:180px;overflow-y:auto">
+      <table class="printings-table">
+        <tr><th>發售日</th><th>卡號</th><th>稀有度</th><th>卡包</th></tr>${printRows}
+      </table></div></div>` : ""}
+    <div class="modal-actions">
+      <button class="add">＋ 加入願望清單</button>
+    </div>`;
+}
+
+function pkmDetailHtml(d) {
+  const chips = [];
+  if (d.evolve_marker) chips.push(`<span class="badge-chip">${esc(d.evolve_marker)}</span>`);
+  if (d.set_alpha) chips.push(`<span class="badge-chip">系列 ${esc(d.set_alpha)}</span>`);
+  if (d.collector_number) chips.push(`<span class="badge-chip stat">${esc(d.collector_number)}</span>`);
+  if (d.rarity) chips.push(`<span class="badge-chip stat">${esc(d.rarity)}</span>`);
+
+  const variants = (d.variants || []).map((v) => `
+    <li class="${v.id === d.id ? "current" : ""}">
+      <a href="#" data-vid="${v.id}">
+        <span>${esc(v.set_alpha || "")} ${esc(v.collector_number || "")}</span>
+        ${v.rarity ? `<span class="rarity-tag">${esc(v.rarity)}</span>` : ""}
+        ${v.id === d.id ? "<span>← 目前</span>" : ""}
+      </a>
+    </li>`).join("");
+
+  return `
+    <h2>${esc(d.name)}</h2>
+    <p class="modal-sub">卡片效果請見左側卡圖（繁中卡面）</p>
+    <div class="badge-row">${chips.join("")}</div>
+    ${(d.variants || []).length > 1 ? `<div class="modal-section">
+      <h4>同名卡版本（${d.variants.length}）——挑你要收的版本</h4>
+      <ul class="variant-list" style="max-height:200px;overflow-y:auto">${variants}</ul></div>` : ""}
+    <div class="modal-actions">
+      <button class="add">＋ 加入願望清單</button>
+      <a class="official" href="${esc(d.official_url)}" target="_blank" rel="noopener">官方詳細頁</a>
+    </div>`;
+}
+
+function bindModalActions(d) {
+  const addBtn = modal.querySelector(".add");
+  const card = d.game === "ygo"
+    ? { id: d.id, game: "ygo", name: d.name, name_jp: d.name_jp,
+        collector_number: null, rarity: null, image_url: d.image_url }
+    : { id: d.id, game: "pkm", name: d.name, set_alpha: d.set_alpha,
+        collector_number: d.collector_number, rarity: d.rarity,
+        image_url: d.image_url };
+  if (wishlist.has(keyOf(card))) {
+    addBtn.disabled = true;
+    addBtn.textContent = "已在清單中";
+  }
+  addBtn.addEventListener("click", () => {
+    wishlist.set(keyOf(card), { card, qty: 1, rarity: "", art: "",
+                                lang: card.game === "ygo" ? "日紙" : "",
+                                cardRarities: null });
+    if (card.game === "ygo") loadCardRarities(keyOf(card), card.id);
+    renderWishlist();
+    addBtn.disabled = true;
+    addBtn.textContent = "已加入 ✓";
+  });
+  // 寶可夢：切換同名卡版本
+  modal.querySelectorAll("[data-vid]").forEach((a) =>
+    a.addEventListener("click", (e) => {
+      e.preventDefault();
+      openCardModal("pkm", parseInt(a.dataset.vid));
+    }));
 }
 
 // ---------- 牌組匯入 ----------

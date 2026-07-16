@@ -270,6 +270,55 @@ def api_rarities():
     return jsonify({"rarities": rows})
 
 
+@app.get("/api/card/<game>/<int:card_id>")
+def api_card_detail(game, card_id):
+    """卡片詳情（點卡片彈出的視窗用）。兩遊戲欄位不同：
+
+    ygo：多語卡名、種類/屬性/攻守、效果文字、收錄卡包表（卡號/稀有度/發售日）
+    pkm：系列/編號/稀有度、同名卡的其他印刷版本、官方詳細頁連結
+    """
+    conn = get_conn()
+    if game == "ygo":
+        r = conn.execute("SELECT * FROM ygo_cards WHERE id=?", (card_id,)).fetchone()
+        if not r:
+            conn.close()
+            abort(404)
+        printings = [dict(p) for p in conn.execute(
+            "SELECT release, code, rarity, pack FROM ygo_printings "
+            "WHERE card_id=? ORDER BY release DESC", (card_id,))]
+        detail = {
+            "game": "ygo", "id": r["id"],
+            "name": r["name_tc"], "name_jp": r["name_jp"], "name_en": r["name_en"],
+            "name_cnocg": r["name_cnocg"],
+            "types": r["types"], "card_text": r["card_text"],
+            "pend_text": r["pend_text"],
+            "image_url": ygo_img_url(r["id"]),
+            "printings": printings,
+        }
+    elif game == "pkm":
+        r = conn.execute("SELECT * FROM cards WHERE id=?", (card_id,)).fetchone()
+        if not r:
+            conn.close()
+            abort(404)
+        variants = [dict(v) for v in conn.execute(
+            "SELECT id, set_alpha, collector_number, rarity FROM cards "
+            "WHERE name=? AND detail_fetched=1 ORDER BY id DESC", (r["name"],))]
+        detail = {
+            "game": "pkm", "id": r["id"],
+            "name": r["name"], "evolve_marker": r["evolve_marker"],
+            "set_alpha": r["set_alpha"], "collector_number": r["collector_number"],
+            "rarity": r["rarity"],
+            "image_url": f"/img/pkm/{r['id']}",
+            "official_url": f"https://asia.pokemon-card.com/tw/card-search/detail/{r['id']}/",
+            "variants": variants,
+        }
+    else:
+        conn.close()
+        abort(404)
+    conn.close()
+    return jsonify(detail)
+
+
 @app.get("/api/cards")
 def api_cards():
     """批次取卡片資料（分享連結還原用）。?game=ygo&ids=1,2,3"""

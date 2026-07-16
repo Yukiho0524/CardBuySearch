@@ -95,6 +95,8 @@ def get_conn():
     for table, col, typ in (
         ("ygo_cards", "name_cnocg", "TEXT"),
         ("ygo_cards", "name_md", "TEXT"),
+        ("ygo_cards", "card_text", "TEXT"),   # 效果文字（繁中）
+        ("ygo_cards", "pend_text", "TEXT"),   # 靈擺效果（繁中）
         ("ruten_sellers", "credit_rate", "REAL"),   # 賣家評價（如 4.99）
         ("ruten_sellers", "credit_cnt", "INTEGER"),  # 評價數
     ):

@@ -51,6 +51,9 @@ def import_cards(dump):
         sc = entry.get("cn_name") or entry.get("sc_name") or ""
         cnocg = entry.get("cnocg_n") or ""  # 中文版官方譯名（台/港，如 藍眼白龍）
         md = entry.get("md_name") or ""     # Master Duel 官方譯名
+        text = entry.get("text") or {}
+        desc = text.get("desc") or ""       # 效果文字
+        pdesc = text.get("pdesc") or ""     # 靈擺效果
         rows.append((
             card_id,
             entry.get("cid"),
@@ -58,17 +61,20 @@ def import_cards(dump):
             sc or None,
             entry.get("jp_name") or None,
             entry.get("en_name") or None,
-            (entry.get("text") or {}).get("types"),
+            cc.convert(text.get("types")) if text.get("types") else None,
             cc.convert(cnocg) if cnocg else None,
             cc.convert(md) if md else None,
+            cc.convert(desc) if desc else None,
+            cc.convert(pdesc) if pdesc else None,
         ))
     conn.executemany(
         "INSERT INTO ygo_cards (id, cid, name_tc, name_sc, name_jp, name_en, types, "
-        "name_cnocg, name_md) "
-        "VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
+        "name_cnocg, name_md, card_text, pend_text) "
+        "VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET "
         "cid=excluded.cid, name_tc=excluded.name_tc, name_sc=excluded.name_sc, "
         "name_jp=excluded.name_jp, name_en=excluded.name_en, types=excluded.types, "
-        "name_cnocg=excluded.name_cnocg, name_md=excluded.name_md",
+        "name_cnocg=excluded.name_cnocg, name_md=excluded.name_md, "
+        "card_text=excluded.card_text, pend_text=excluded.pend_text",
         rows,
     )
     conn.commit()
