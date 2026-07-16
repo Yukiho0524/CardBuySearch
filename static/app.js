@@ -354,8 +354,31 @@ function restoreWishlist() {
                                      art: it.art || "", cardRarities: null });
       if (it.card.game === "ygo") loadCardRarities(keyOf(it.card), it.card.id);
     }
-    if (wishlist.size) renderWishlist();
+    if (wishlist.size) {
+      renderWishlist();
+      refreshWishlistCards(data);  // 舊存檔的圖片網址可能過期，向後端更新
+    }
   } catch (e) { /* 空清單開始 */ }
+}
+
+async function refreshWishlistCards(stored) {
+  const byGame = {};
+  for (const it of stored) (byGame[it.card.game] = byGame[it.card.game] || []).push(it.card.id);
+  let changed = false;
+  await Promise.all(Object.entries(byGame).map(async ([game, ids]) => {
+    try {
+      const res = await fetch(`/api/cards?game=${game}&ids=${ids.join(",")}`);
+      const data = await res.json();
+      for (const c of data.cards) {
+        const item = wishlist.get(keyOf(c));
+        if (item && item.card.image_url !== c.image_url) {
+          item.card = { ...item.card, ...c };
+          changed = true;
+        }
+      }
+    } catch (e) { /* 離線時維持舊資料 */ }
+  }));
+  if (changed) renderWishlist();
 }
 
 $("#shareBtn").addEventListener("click", () => {
