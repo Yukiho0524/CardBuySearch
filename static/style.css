@@ -1,5 +1,10 @@
 * { box-sizing: border-box; margin: 0; padding: 0; }
 
+/* 保險絲：HTML hidden 屬性永遠優先於任何 display 樣式。
+   曾兩度因元素自帶 display:flex 蓋過 hidden 造成「藏不起來」
+   （彈窗遮罩、篩選列），以此規則根絕整類問題。 */
+[hidden] { display: none !important; }
+
 :root {
   --bg: #f4f5f7;
   --panel: #ffffff;
