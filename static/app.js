@@ -95,9 +95,11 @@ function renderFilterBar() {
   if (game === "ygo") {
     const cat = cur.cat || "";
     // 選了魔法/陷阱 → 細分類換成該類別的；星數/屬性/種族只在怪獸（或未選）時出現
+    // （subTable 後備：後端若是舊版（無 subtypes_by_cat）退回扁平清單）
+    const subTable = opts.subtypes_by_cat || { "": opts.subtypes || [] };
     let html = filterSelect("cat", "全部類別", opts.categories, cat) +
       filterSelect("sub", cat ? `${cat}種類` : "細分類",
-                   opts.subtypes_by_cat[cat] || opts.subtypes_by_cat[""], cur.sub);
+                   subTable[cat] || subTable[""], cur.sub);
     if (!cat || cat === "怪獸") {
       html += filterSelect("lv", "星數/連結", opts.levels, cur.lv) +
               filterSelect("attr", "屬性", opts.attrs, cur.attr) +

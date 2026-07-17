@@ -18,6 +18,9 @@ from ruten import (YGO_LANGS, YGO_RARITIES, expand_variants,
                    resolve_seller)
 
 app = Flask(__name__, static_folder="static", static_url_path="")
+# 本機自用：靜態檔（HTML/JS/CSS）不讓瀏覽器快取，改版即生效，
+# 避免新舊版本混搭造成的怪異行為（卡圖代理另有自己的快取標頭）
+app.config["SEND_FILE_MAX_AGE_DEFAULT"] = 0
 
 _t2s = OpenCC("t2s")    # 讓使用者用繁中搜到簡中卡名
 _s2tw = OpenCC("s2twp")  # 讓使用者貼簡中也能搜到繁中卡名
