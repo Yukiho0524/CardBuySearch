@@ -24,6 +24,14 @@ if errorlevel 1 (
     )
 )
 
+rem ---- 清理殘留的舊伺服器（Windows 允許多程序綁同一埠，殘骸會搶走請求）----
+for /f "tokens=5" %%p in ('netstat -ano ^| findstr ":5000" ^| findstr "LISTENING"') do (
+    tasklist /fi "PID eq %%p" 2>nul | findstr /i "python" >nul && (
+        echo 關閉殘留的舊網站程序 PID %%p
+        taskkill /PID %%p /F >nul 2>&1
+    )
+)
+
 rem ---- 檢查資料庫 ----
 if not exist "data\cards.db" (
     echo [!] 尚未建立卡牌資料庫，請先依 README 跑爬蟲建庫
