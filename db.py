@@ -99,6 +99,9 @@ def get_conn():
         ("ygo_cards", "pend_text", "TEXT"),   # 靈擺效果（繁中）
         ("ruten_sellers", "credit_rate", "REAL"),   # 賣家評價（如 4.99）
         ("ruten_sellers", "credit_cnt", "INTEGER"),  # 評價數
+        ("cards", "card_kind", "TEXT"),   # 寶可夢/物品卡/支援者卡/競技場卡/寶可夢道具/能量卡
+        ("cards", "ptype", "TEXT"),       # 寶可夢屬性（草火水雷超鬥惡鋼龍無色）
+        ("cards", "hp", "INTEGER"),
     ):
         try:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")

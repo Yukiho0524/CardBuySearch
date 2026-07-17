@@ -202,15 +202,28 @@ def api_browse_options():
             _ygo_races = sorted(races)
         out = {
             "categories": ["怪獸", "魔法", "陷阱"],
-            "subtypes": ["通常", "效果", "儀式", "融合", "同調", "超量",
-                         "連結", "靈擺", "調整", "特殊召喚",
-                         "速攻", "永續", "場地", "裝備", "反擊"],
+            # 細分類依類別而異（前端連動切換）
+            "subtypes_by_cat": {
+                "": ["通常", "效果", "儀式", "融合", "同調", "超量",
+                     "連結", "靈擺", "調整", "特殊召喚",
+                     "速攻", "永續", "場地", "裝備", "反擊"],
+                "怪獸": ["通常", "效果", "儀式", "融合", "同調", "超量",
+                        "連結", "靈擺", "調整", "特殊召喚"],
+                "魔法": ["通常", "速攻", "永續", "場地", "裝備", "儀式"],
+                "陷阱": ["通常", "永續", "反擊"],
+            },
             "attrs": ["光", "暗", "炎", "水", "地", "風", "神"],
             "races": _ygo_races,
+            "levels": ([f"★{i}" for i in range(1, 13)]
+                       + [f"LINK-{i}" for i in range(1, 7)]),
         }
     else:
         out = {
-            "kinds": ["基礎", "1階進化", "2階進化", "其他", "訓練家·能量"],
+            "kinds": ["寶可夢", "物品卡", "支援者卡", "競技場卡",
+                      "寶可夢道具", "能量卡"],
+            "ptypes": ["草", "火", "水", "雷", "超", "鬥", "惡", "鋼", "龍", "無色"],
+            "stages": ["基礎", "1階進化", "2階進化",
+                       "ex", "V", "VMAX", "VSTAR", "GX", "光輝"],
             "sets": [r[0] for r in conn.execute(
                 "SELECT DISTINCT set_alpha FROM cards WHERE set_alpha IS NOT NULL "
                 "ORDER BY set_alpha DESC")],
@@ -235,9 +248,24 @@ def api_browse():
             conds.append("types LIKE ?")
             params.append(f"[{cat}%")
         sub = request.args.get("sub")
-        if sub:  # 細分類在第一個中括號內，用 |分隔
-            conds.append("(types LIKE ? OR types LIKE ?)")
-            params += [f"%|{sub}|%", f"%|{sub}]%"]
+        if sub:
+            sub_term = {"連結": "連線"}.get(sub, sub)  # 資料經簡繁轉換為「連線」
+            if sub == "通常" and cat in ("魔法", "陷阱"):
+                # 通常魔法/陷阱沒有子類標記，格式就是 [魔法]
+                conds.append("types LIKE ?")
+                params.append(f"[{cat}]%")
+            else:  # 細分類在第一個中括號內，用 | 分隔
+                conds.append("(types LIKE ? OR types LIKE ?)")
+                params += [f"%|{sub_term}|%", f"%|{sub_term}]%"]
+        lv = request.args.get("lv")
+        if lv:
+            if lv.startswith("LINK-"):
+                conds.append("types LIKE ?")
+                params.append(f"%[{lv}]%")
+            else:  # ★N 同時匹配等級（★）與超量階級（☆）
+                n = lv.lstrip("★")
+                conds.append("(types LIKE ? OR types LIKE ?)")
+                params += [f"%[★{n}]%", f"%[☆{n}]%"]
         attr = request.args.get("attr")
         if attr:  # 屬性格式「種族/屬性」後接換行或字串結尾
             conds.append("(types LIKE ? OR types LIKE ?)")
@@ -259,12 +287,23 @@ def api_browse():
         } for r in rows]
     else:
         conds, params = ["detail_fetched=1"], []
-        kind = request.args.get("kind")
-        if kind == "訓練家·能量":
-            conds.append("evolve_marker IS NULL")
-        elif kind:
-            conds.append("evolve_marker = ?")
+        kind = request.args.get("kind")  # 大類：寶可夢/物品卡/支援者卡/...
+        if kind:
+            conds.append("card_kind = ?")
             params.append(kind)
+        ptype = request.args.get("ptype")  # 屬性（僅寶可夢卡有）
+        if ptype:
+            conds.append("ptype = ?")
+            params.append(ptype)
+        stage = request.args.get("stage")  # 階段/機制
+        if stage in ("基礎", "1階進化", "2階進化"):
+            conds.append("evolve_marker = ?")
+            params.append(stage)
+        elif stage == "光輝":
+            conds.append("name LIKE '光輝%'")
+        elif stage:  # ex/V/VMAX/VSTAR/GX：卡名字尾（LIKE 不分大小寫，涵蓋舊 EX）
+            conds.append("name LIKE ?")
+            params.append(f"%{stage}")
         set_alpha = request.args.get("set")
         if set_alpha:
             conds.append("set_alpha = ?")

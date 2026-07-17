@@ -115,10 +115,39 @@ def crawl_rarity_map(conn, max_pages_per_rarity=None, refresh_pages=None):
         time.sleep(DELAY)
 
 
+# 能量圖示檔名 → 中文屬性
+TYPE_MAP = {
+    "Grass": "草", "Fire": "火", "Water": "水", "Lightning": "雷",
+    "Psychic": "超", "Fighting": "鬥", "Darkness": "惡", "Metal": "鋼",
+    "Dragon": "龍", "Colorless": "無色",
+}
+TRAINER_KINDS = ("物品卡", "支援者卡", "競技場卡", "寶可夢道具")
+
+
 def parse_detail(html):
-    """解析詳細頁 → dict(name, evolve_marker, set_alpha, set_mark, collector_number, image_url)。"""
+    """解析詳細頁 → dict(name, evolve_marker, set_alpha, set_mark,
+    collector_number, image_url, card_kind, ptype, hp)。"""
     soup = BeautifulSoup(html, "html.parser")
-    out = {}
+    out = {"card_kind": None, "ptype": None, "hp": None}
+    # 大類/屬性/HP：有 HP 區塊＝寶可夢；訓練家卡種類在內文標題
+    main = soup.select_one(".mainInfomation")
+    if main and main.select_one(".hitPoint"):
+        out["card_kind"] = "寶可夢"
+        num = main.select_one(".number")
+        if num and num.get_text(strip=True).isdigit():
+            out["hp"] = int(num.get_text(strip=True))
+        img = main.select_one("img[src*='/energy/']")
+        if img:
+            m = re.search(r"energy/(\w+)\.png", img["src"])
+            if m:
+                out["ptype"] = TYPE_MAP.get(m.group(1))
+    else:
+        h3 = soup.select_one(".cardInformationColumn .commonHeader")
+        t = h3.get_text(strip=True) if h3 else ""
+        if t in TRAINER_KINDS:
+            out["card_kind"] = t
+        elif "能量" in t:
+            out["card_kind"] = "能量卡"
     h1 = soup.select_one("h1.pageHeader.cardDetail")
     if h1:
         marker = h1.select_one(".evolveMarker")
@@ -140,9 +169,19 @@ def parse_detail(html):
     return out
 
 
-def crawl_details(conn, limit=None, ids=None):
-    """Phase B：抓詳細頁。ids 指定時只抓那些卡，否則抓所有未抓的。"""
-    if ids:
+def crawl_details(conn, limit=None, ids=None, ext=False):
+    """Phase B：抓詳細頁。ids 指定時只抓那些卡，否則抓所有未抓的。
+
+    ext=True：補抓擴充欄位（card_kind/ptype/hp）——重掃已有詳細資料
+    但 card_kind 仍為空的卡。
+    """
+    if ext:
+        q = ("SELECT id FROM cards WHERE detail_fetched=1 AND card_kind IS NULL "
+             "ORDER BY id DESC")
+        if limit:
+            q += f" LIMIT {int(limit)}"
+        todo = [r["id"] for r in conn.execute(q)]
+    elif ids:
         rows = [(i,) for i in ids]
         conn.executemany("INSERT OR IGNORE INTO cards (id) VALUES (?)", rows)
         conn.commit()
@@ -170,10 +209,13 @@ def crawl_details(conn, limit=None, ids=None):
             try:
                 conn.execute(
                     "UPDATE cards SET name=?, evolve_marker=?, set_alpha=?, set_mark=?, "
-                    "collector_number=?, image_url=?, detail_fetched=1 WHERE id=?",
+                    "collector_number=?, image_url=?, card_kind=?, ptype=?, hp=?, "
+                    "detail_fetched=1 WHERE id=?",
                     (d.get("name"), d.get("evolve_marker"), d.get("set_alpha"),
                      d.get("set_mark"), d.get("collector_number"), d.get("image_url"),
-                     card_id),
+                     ("能量卡" if d.get("card_kind") is None
+                      and "能量" in (d.get("name") or "") else d.get("card_kind")),
+                     d.get("ptype"), d.get("hp"), card_id),
                 )
                 conn.commit()
                 break
@@ -207,6 +249,8 @@ if __name__ == "__main__":
     ap.add_argument("--refresh-pages", type=int, default=None,
                     help="增量更新：重掃每個稀有度前 N 頁補新卡")
     ap.add_argument("--details", action="store_true", help="Phase B：抓詳細頁")
+    ap.add_argument("--ext", action="store_true",
+                    help="補抓擴充欄位（大類/屬性/HP），重掃 card_kind 為空的卡")
     ap.add_argument("--limit", type=int, default=None, help="Phase B 最多抓幾張")
     ap.add_argument("--keyword", type=str, default=None, help="針對關鍵字抓卡")
     args = ap.parse_args()
@@ -219,6 +263,8 @@ if __name__ == "__main__":
         crawl_keyword(conn, args.keyword)
     if args.details:
         crawl_details(conn, limit=args.limit)
+    if args.ext:
+        crawl_details(conn, limit=args.limit, ext=True)
     if not (args.rarity_map or args.details or args.keyword
-            or args.refresh_pages):
+            or args.refresh_pages or args.ext):
         ap.print_help()

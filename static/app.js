@@ -74,35 +74,75 @@ $("#searchBtn").addEventListener("click", doSearch);
 $("#searchInput").addEventListener("keydown", (e) => { if (e.key === "Enter") doSearch(); });
 
 // ---------- 全部卡片一覽（篩選＋分頁） ----------
-let browseState = null; // {game, filters, offset, total} 非 null 表示一覽模式
-
-const FILTER_DEFS = {
-  pkm: [["kind", "種類", "kinds"], ["set", "系列", "sets"], ["rarity", "稀有度", "rarities"]],
-  ygo: [["cat", "類別", "categories"], ["sub", "細分類", "subtypes"],
-        ["attr", "屬性", "attrs"], ["race", "種族", "races"]],
-};
+let browseState = null; // {game, opts, offset} 非 null 表示一覽模式
 
 $("#browseBtn").addEventListener("click", () => startBrowse());
+
+function filterSelect(key, label, values, keep) {
+  return `
+    <select data-fkey="${key}">
+      <option value="">${label}</option>
+      ${(values || []).map((v) =>
+        `<option value="${v}" ${keep === v ? "selected" : ""}>${v}</option>`).join("")}
+    </select>`;
+}
+
+function renderFilterBar() {
+  const { game, opts } = browseState;
+  const bar = $("#filterBar");
+  const cur = {};
+  bar.querySelectorAll("select").forEach((s) => { cur[s.dataset.fkey] = s.value; });
+  if (game === "ygo") {
+    const cat = cur.cat || "";
+    // 選了魔法/陷阱 → 細分類換成該類別的；星數/屬性/種族只在怪獸（或未選）時出現
+    let html = filterSelect("cat", "全部類別", opts.categories, cat) +
+      filterSelect("sub", cat ? `${cat}種類` : "細分類",
+                   opts.subtypes_by_cat[cat] || opts.subtypes_by_cat[""], cur.sub);
+    if (!cat || cat === "怪獸") {
+      html += filterSelect("lv", "星數/連結", opts.levels, cur.lv) +
+              filterSelect("attr", "屬性", opts.attrs, cur.attr) +
+              filterSelect("race", "種族", opts.races, cur.race);
+    }
+    bar.innerHTML = html + '<button class="clear-filters">清除條件</button>';
+  } else {
+    bar.innerHTML =
+      filterSelect("kind", "卡片大類", opts.kinds, cur.kind) +
+      ((cur.kind || "寶可夢") === "寶可夢"
+        ? filterSelect("ptype", "屬性", opts.ptypes, cur.ptype) +
+          filterSelect("stage", "階段/機制", opts.stages, cur.stage)
+        : "") +
+      filterSelect("set", "系列", opts.sets, cur.set) +
+      filterSelect("rarity", "稀有度", opts.rarities, cur.rarity) +
+      '<button class="clear-filters">清除條件</button>';
+  }
+  bar.hidden = false;
+  bar.querySelectorAll("select").forEach((s) =>
+    s.addEventListener("change", () => {
+      if (s.dataset.fkey === "cat" || s.dataset.fkey === "kind") {
+        // 換類別時重畫連動選單（細分類清空避免殘留不合法值）
+        const keep = s.value;
+        bar.querySelectorAll("select").forEach((x) => {
+          if (x !== s && (x.dataset.fkey === "sub")) x.value = "";
+        });
+        renderFilterBar();
+        bar.querySelector(`[data-fkey="${s.dataset.fkey}"]`).value = keep;
+      }
+      loadBrowse(0);
+    }));
+  bar.querySelector(".clear-filters").addEventListener("click", () => {
+    bar.querySelectorAll("select").forEach((s) => { s.value = ""; });
+    renderFilterBar();
+    loadBrowse(0);
+  });
+}
 
 async function startBrowse() {
   const game = currentGame();
   const res = await fetch(`/api/browse-options?game=${game}`);
   const opts = await res.json();
-  const bar = $("#filterBar");
-  bar.innerHTML = FILTER_DEFS[game].map(([key, label, optKey]) => `
-    <select data-fkey="${key}">
-      <option value="">全部${label}</option>
-      ${(opts[optKey] || []).map((v) => `<option value="${v}">${v}</option>`).join("")}
-    </select>`).join("") +
-    '<button class="clear-filters">清除條件</button>';
-  bar.hidden = false;
-  bar.querySelectorAll("select").forEach((s) =>
-    s.addEventListener("change", () => loadBrowse(0)));
-  bar.querySelector(".clear-filters").addEventListener("click", () => {
-    bar.querySelectorAll("select").forEach((s) => { s.value = ""; });
-    loadBrowse(0);
-  });
-  browseState = { game, offset: 0 };
+  browseState = { game, opts, offset: 0 };
+  $("#filterBar").innerHTML = "";
+  renderFilterBar();
   loadBrowse(0);
 }
 
