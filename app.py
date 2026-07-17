@@ -44,7 +44,15 @@ LISTING_CACHE_TTL = 600
 
 @app.get("/")
 def index():
-    return send_from_directory("static", "index.html")
+    """首頁：注入資產版本戳（檔案 mtime），JS/CSS 一更新網址就變，
+    瀏覽器必定重抓——根絕舊版快取殘留。HTML 本身不允許快取。"""
+    static_dir = Path(app.static_folder)
+    v = int(max((static_dir / f).stat().st_mtime for f in ("app.js", "style.css")))
+    html = (static_dir / "index.html").read_text(encoding="utf-8")
+    resp = app.make_response(html.replace("__V__", str(v)))
+    resp.headers["Content-Type"] = "text/html; charset=utf-8"
+    resp.headers["Cache-Control"] = "no-store"
+    return resp
 
 
 @app.get("/img/<game>/<int:card_id>")
