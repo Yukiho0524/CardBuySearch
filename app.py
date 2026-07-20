@@ -394,8 +394,13 @@ def api_search_by_image():
 
 @app.get("/api/ygo/options")
 def api_ygo_options():
-    """遊戲王願望清單可選的稀有度與紙種。"""
-    return jsonify({"rarities": list(YGO_RARITIES), "langs": list(YGO_LANGS)})
+    """遊戲王願望清單可選的稀有度與紙種。
+
+    「簡中」保留在比對字典（選日紙/韓紙時用來排除簡中商品），
+    但台灣市場買不到，不列入可選紙種。
+    """
+    langs = [l for l in YGO_LANGS if l != "簡中"]
+    return jsonify({"rarities": list(YGO_RARITIES), "langs": langs})
 
 
 @app.get("/api/ygo/printings/<int:card_id>")
