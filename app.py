@@ -1008,4 +1008,6 @@ def api_compare():
 
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=False)
+    # 綁 0.0.0.0：同一內網（區域網路）的其他電腦也能連
+    # （用本機 IP:5000 開啟）。純內網自用，非對外公開網站。
+    app.run(host="0.0.0.0", port=5000, debug=False)
