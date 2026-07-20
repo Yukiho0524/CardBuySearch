@@ -2,6 +2,7 @@
 
 啟動：python app.py  →  http://localhost:5000
 """
+import json
 import re
 import time
 from collections import defaultdict
@@ -225,6 +226,52 @@ def api_search():
 
 _ygo_races = None  # 種族清單（從 types 解析一次後快取）
 
+# 寶可夢擴充包代碼 → 中文產品名（官方站抓取，可自行增補）
+try:
+    PKM_PRODUCTS = json.loads(
+        (Path(__file__).parent / "pkm_products.json").read_text(encoding="utf-8"))
+except (OSError, ValueError):
+    PKM_PRODUCTS = {}
+_pkm_prod_cache = None  # {product_code: {"name","marks":[set_mark...]}}
+
+# 鋼彈系列代碼 → 官方產品名（GCG 繁中站產品名為英文）
+GUNDAM_PRODUCTS = {
+    "GD01": "Newtype Rising", "GD02": "Dual Impact", "GD03": "Steel Requiem",
+    "GD04": "Phantom Aria", "GD05": "Freedom Ascension",
+    "ST01": "Heroic Beginnings", "ST02": "Wings of Advance", "ST03": "Zeon's Rush",
+    "ST04": "SEED Strike", "ST05": "Iron Bloom", "ST06": "Clan Unity",
+    "ST07": "Celestial Drive", "ST08": "Flash of Radiance", "ST09": "Destiny Ignition",
+}
+
+
+def pkm_product_code(set_mark):
+    """set_mark（如 exp_SV8a、mtl_f）→ 產品代碼（SV8A、MTL），合併箔面變體。"""
+    s = re.sub(r"exp", "", set_mark or "", flags=re.I)
+    s = re.sub(r"_f$", "", s).strip("_").upper()
+    return s or "OTHER"
+
+
+def pkm_products():
+    """回傳資料庫實際有的產品清單（新→舊），每項 {value, label}。"""
+    global _pkm_prod_cache
+    if _pkm_prod_cache is None:
+        conn = get_conn()
+        groups = {}
+        for r in conn.execute(
+                "SELECT DISTINCT set_mark FROM cards WHERE set_mark IS NOT NULL "
+                "AND detail_fetched=1"):
+            code = pkm_product_code(r["set_mark"])
+            groups.setdefault(code, []).append(r["set_mark"])
+        conn.close()
+        _pkm_prod_cache = groups
+    items = []
+    for code, marks in _pkm_prod_cache.items():
+        items.append({"value": code, "label": PKM_PRODUCTS.get(code, code),
+                      "named": code in PKM_PRODUCTS})
+    # 有中文名的排前面（近期產品），其餘（代碼）排後
+    items.sort(key=lambda x: (not x["named"], x["label"]))
+    return items
+
 
 @app.get("/api/browse-options")
 def api_browse_options():
@@ -270,7 +317,8 @@ def api_browse_options():
                 "SELECT DISTINCT level FROM gundam_cards WHERE level IS NOT NULL "
                 "ORDER BY level")],
             "sources": distinct("source"),
-            "packs": distinct("pack"),
+            "products": [{"value": p, "label": f"{p}　{GUNDAM_PRODUCTS.get(p, '')}".strip()}
+                         for p in distinct("pack")],
             "rarities": distinct("rarity"),
         }
     else:
@@ -280,6 +328,7 @@ def api_browse_options():
             "ptypes": ["草", "火", "水", "雷", "超", "鬥", "惡", "鋼", "龍", "無色"],
             "stages": ["基礎", "1階進化", "2階進化",
                        "ex", "V", "VMAX", "VSTAR", "GX", "光輝"],
+            "products": pkm_products(),
             "sets": [r[0] for r in conn.execute(
                 "SELECT DISTINCT set_alpha FROM cards WHERE set_alpha IS NOT NULL "
                 "ORDER BY set_alpha DESC")],
@@ -380,6 +429,13 @@ def api_browse():
         elif stage:  # ex/V/VMAX/VSTAR/GX：卡名字尾（LIKE 不分大小寫，涵蓋舊 EX）
             conds.append("name LIKE ?")
             params.append(f"%{stage}")
+        product = request.args.get("product")  # 產品/擴充包
+        if product:
+            pkm_products()  # 確保 _pkm_prod_cache 已建
+            mark_list = (_pkm_prod_cache or {}).get(product, [])
+            if mark_list:
+                conds.append(f"set_mark IN ({','.join('?' * len(mark_list))})")
+                params += mark_list
         set_alpha = request.args.get("set")
         if set_alpha:
             conds.append("set_alpha = ?")

@@ -88,11 +88,15 @@ let browseState = null; // {game, opts, offset} 非 null 表示一覽模式
 $("#browseBtn").addEventListener("click", () => startBrowse());
 
 function filterSelect(key, label, values, keep) {
+  // values 可為字串陣列或 {value,label} 物件陣列
   return `
     <select data-fkey="${key}">
       <option value="">${label}</option>
-      ${(values || []).map((v) =>
-        `<option value="${v}" ${keep === v ? "selected" : ""}>${v}</option>`).join("")}
+      ${(values || []).map((v) => {
+        const val = typeof v === "object" ? v.value : v;
+        const txt = typeof v === "object" ? v.label : v;
+        return `<option value="${val}" ${keep === val ? "selected" : ""}>${txt}</option>`;
+      }).join("")}
     </select>`;
 }
 
@@ -121,7 +125,7 @@ function renderFilterBar() {
       filterSelect("type", "卡牌類型", opts.types, cur.type) +
       filterSelect("lv", "等級", opts.levels, cur.lv) +
       filterSelect("source", "作品", opts.sources, cur.source) +
-      filterSelect("pack", "系列", opts.packs, cur.pack) +
+      filterSelect("pack", "產品", opts.products, cur.pack) +
       filterSelect("rarity", "稀有度", opts.rarities, cur.rarity) +
       '<button class="clear-filters">清除條件</button>';
   } else {
@@ -131,6 +135,7 @@ function renderFilterBar() {
         ? filterSelect("ptype", "屬性", opts.ptypes, cur.ptype) +
           filterSelect("stage", "階段/機制", opts.stages, cur.stage)
         : "") +
+      filterSelect("product", "產品", opts.products, cur.product) +
       filterSelect("set", "系列", opts.sets, cur.set) +
       filterSelect("rarity", "稀有度", opts.rarities, cur.rarity) +
       '<button class="clear-filters">清除條件</button>';
