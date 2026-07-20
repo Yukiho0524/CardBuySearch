@@ -150,7 +150,10 @@ body {
 .card-item {
   border: 1px solid var(--border); border-radius: 8px; overflow: hidden;
   background: var(--panel-sub); text-align: center; font-size: .8rem;
+  display: flex; flex-direction: column;  /* 按鈕釘底：同列卡名長短不一也對齊 */
 }
+.card-item .card-click { flex: 1; }
+.card-item > button { margin-top: auto; }
 .card-item img { width: 100%; aspect-ratio: 63/88; object-fit: contain; background: var(--img-bg); }
 .card-click { cursor: zoom-in; }
 .card-click:hover img { filter: brightness(1.06); }
