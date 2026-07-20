@@ -28,6 +28,7 @@ async function loadYgoOptions() {
 loadRarities();
 loadYgoOptions();
 restoreWishlist();
+startBrowse();  // 開頁預設進入「全部卡片」一覽（含篩選列）
 
 // ---------- 深色模式開關 ----------
 function applyTheme(dark) {
@@ -48,17 +49,17 @@ document.querySelectorAll('input[name="game"]').forEach((el) =>
     $("#searchInput").placeholder = ygo
       ? "卡名（例：灰流麗、増殖するG，中日文皆可）"
       : "卡名或編號（例：噴火龍、094/081）";
-    $("#searchResults").innerHTML = "";
-    stopBrowse();
+    $("#searchInput").value = "";
+    startBrowse();  // 切換遊戲直接進入該遊戲的全卡一覽
   }));
 
 // ---------- 搜尋 ----------
 async function doSearch() {
-  stopBrowse();
   const q = $("#searchInput").value.trim();
   const game = currentGame();
   const rarity = game === "pkm" ? $("#raritySelect").value : "";
-  if (!q && !rarity) return;
+  if (!q && !rarity) { startBrowse(); return; }  // 清空搜尋＝回到全卡一覽
+  stopBrowse();
   const grid = $("#searchResults");
   grid.innerHTML = '<p class="empty"><span class="spinner"></span>搜尋中…</p>';
   const res = await fetch(`/api/search?game=${game}&q=${encodeURIComponent(q)}&rarity=${encodeURIComponent(rarity)}`);
@@ -213,6 +214,7 @@ function keyOf(c) { return `${c.game}:${c.id}`; }
 function cardEl(c) {
   const div = document.createElement("div");
   div.className = "card-item";
+  div.dataset.key = keyOf(c);
   const inList = wishlist.has(keyOf(c));
   const sub = c.game === "ygo"
     ? `${c.name_jp || ""}`
@@ -553,7 +555,9 @@ function renderWishlist() {
     li.querySelector(".rm").addEventListener("click", () => {
       wishlist.delete(key);
       renderWishlist();
-      doSearch();
+      // 原地把結果區同一張卡的「已加入」按鈕復原，不重置目前畫面
+      document.querySelectorAll(`.card-item[data-key="${key}"] button`)
+        .forEach((b) => { b.disabled = false; b.textContent = "＋ 加入清單"; });
     });
     ul.appendChild(li);
   }
