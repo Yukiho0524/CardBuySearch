@@ -71,6 +71,27 @@ CREATE TABLE IF NOT EXISTS ygo_printings_fetched (
     ts      TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 
+-- 鋼彈卡片遊戲 GCG（來源：官方繁中站 gundam-gcg.com/zh-tw）
+-- 卡號即主鍵（如 GD01-001）；一張卡可能有多種稀有度平行卡，rarity 存主要版本
+CREATE TABLE IF NOT EXISTS gundam_cards (
+    id        TEXT PRIMARY KEY,   -- 卡號 GD01-001
+    name_tc   TEXT,               -- 繁中卡名
+    color     TEXT,               -- 顏色 Blue/Green/Red/White
+    card_type TEXT,               -- 卡牌類型 UNIT/PILOT/COMMAND/BASE
+    level     INTEGER,            -- Lv.
+    cost      INTEGER,
+    ap        INTEGER,
+    hp        INTEGER,
+    terrain   TEXT,               -- 地形
+    traits    TEXT,               -- 特徵
+    source    TEXT,               -- 來源作品
+    rarity    TEXT,               -- 稀有度 C/U/R/SR/LR...
+    pack      TEXT,               -- 系列 GD01/ST01...
+    detail_fetched INTEGER DEFAULT 0
+);
+CREATE INDEX IF NOT EXISTS idx_gundam_name ON gundam_cards(name_tc);
+CREATE INDEX IF NOT EXISTS idx_gundam_pack ON gundam_cards(pack);
+
 -- 價格快照：每次比價時記錄各卡（含條件）在露天的最低價
 CREATE TABLE IF NOT EXISTS price_history (
     game    TEXT NOT NULL,

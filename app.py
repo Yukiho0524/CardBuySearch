@@ -13,9 +13,9 @@ from flask import Flask, abort, jsonify, request, send_from_directory
 from opencc import OpenCC
 
 from db import get_conn
-from ruten import (YGO_LANGS, YGO_RARITIES, expand_variants,
-                   find_listings_for_card, find_listings_for_ygo,
-                   resolve_seller)
+from ruten import (GUNDAM_LANGS, YGO_LANGS, YGO_RARITIES, expand_variants,
+                   find_listings_for_card, find_listings_for_gundam,
+                   find_listings_for_ygo, resolve_seller)
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 # 本機自用：靜態檔（HTML/JS/CSS）不讓瀏覽器快取，改版即生效，
@@ -52,6 +52,19 @@ def index():
     resp = app.make_response(html.replace("__V__", str(v)))
     resp.headers["Content-Type"] = "text/html; charset=utf-8"
     resp.headers["Cache-Control"] = "no-store"
+    return resp
+
+
+@app.get("/img/gcg/<card_id>")
+def img_gcg(card_id):
+    """鋼彈卡圖：爬蟲已抓好存在 data/img_cache/gcg/{卡號}.jpg。"""
+    if not re.fullmatch(r"[A-Z]{2}\d+-\d+", card_id):
+        abort(404)
+    cache = IMG_CACHE / "gcg" / f"{card_id}.jpg"
+    if not cache.exists():
+        abort(404)
+    resp = send_from_directory(cache.parent, cache.name)
+    resp.headers["Cache-Control"] = "public, max-age=604800"
     return resp
 
 
@@ -164,6 +177,17 @@ def search_ygo(conn, q, limit=60):
     return cards
 
 
+def gcg_card_dict(r):
+    """鋼彈卡列統一格式（供搜尋/一覽/詳情共用）。"""
+    return {
+        "id": r["id"], "game": "gcg", "name": r["name_tc"],
+        "collector_number": r["id"], "rarity": r["rarity"],
+        "color": r["color"], "card_type": r["card_type"],
+        "level": r["level"], "source": r["source"],
+        "image_url": f"/img/gcg/{r['id']}",
+    }
+
+
 @app.get("/api/search")
 def api_search():
     """卡片搜尋：game＝pkm/ygo，q＝卡名或編號，rarity＝稀有度過濾（僅寶可夢）。"""
@@ -175,6 +199,12 @@ def api_search():
     conn = get_conn()
     if game == "ygo":
         cards = search_ygo(conn, q)
+    elif game == "gcg":
+        rows = conn.execute(
+            "SELECT * FROM gundam_cards WHERE detail_fetched=1 "
+            "AND (name_tc LIKE ? OR id LIKE ?) ORDER BY id LIMIT 60",
+            (f"%{q}%", f"%{q}%")).fetchall()
+        cards = [gcg_card_dict(r) for r in rows]
     else:
         sql = "SELECT * FROM cards WHERE detail_fetched=1"
         params = []
@@ -227,6 +257,21 @@ def api_browse_options():
             "races": _ygo_races,
             "levels": ([f"★{i}" for i in range(1, 13)]
                        + [f"LINK-{i}" for i in range(1, 7)]),
+        }
+    elif game == "gcg":
+        def distinct(col):
+            return [r[0] for r in conn.execute(
+                f"SELECT DISTINCT {col} FROM gundam_cards WHERE {col} IS NOT NULL "
+                f"AND detail_fetched=1 ORDER BY {col}")]
+        out = {
+            "colors": distinct("color"),
+            "types": distinct("card_type"),
+            "levels": [str(r[0]) for r in conn.execute(
+                "SELECT DISTINCT level FROM gundam_cards WHERE level IS NOT NULL "
+                "ORDER BY level")],
+            "sources": distinct("source"),
+            "packs": distinct("pack"),
+            "rarities": distinct("rarity"),
         }
     else:
         out = {
@@ -296,6 +341,26 @@ def api_browse():
             "name_jp": r["name_jp"], "collector_number": None, "rarity": None,
             "image_url": ygo_img_url(r["id"]),
         } for r in rows]
+    elif game == "gcg":
+        conds, params = ["detail_fetched=1"], []
+        for key, col in (("color", "color"), ("type", "card_type"),
+                         ("source", "source"), ("pack", "pack"),
+                         ("rarity", "rarity")):
+            val = request.args.get(key)
+            if val:
+                conds.append(f"{col} = ?")
+                params.append(val)
+        lv = request.args.get("lv")
+        if lv:
+            conds.append("level = ?")
+            params.append(int(lv))
+        where = "WHERE " + " AND ".join(conds)
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM gundam_cards {where}", params).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT * FROM gundam_cards {where} ORDER BY id LIMIT 60 OFFSET ?",
+            params + [offset]).fetchall()
+        cards = [gcg_card_dict(r) for r in rows]
     else:
         conds, params = ["detail_fetched=1"], []
         kind = request.args.get("kind")  # 大類：寶可夢/物品卡/支援者卡/...
@@ -418,6 +483,12 @@ def api_ygo_printings(card_id):
     return jsonify({"printings": printings, "rarities": rarities, "ok": True})
 
 
+@app.get("/api/gcg/options")
+def api_gcg_options():
+    """鋼彈願望清單可選的版本（日版/美版）。"""
+    return jsonify({"langs": list(GUNDAM_LANGS)})
+
+
 @app.get("/api/rarities")
 def api_rarities():
     conn = get_conn()
@@ -426,6 +497,27 @@ def api_rarities():
         "AND detail_fetched=1 ORDER BY rarity")]
     conn.close()
     return jsonify({"rarities": rows})
+
+
+@app.get("/api/card/gcg/<card_id>")
+def api_card_detail_gcg(card_id):
+    """鋼彈卡片詳情：顏色/類型/Lv/COST/AP/HP/特徵/地形/作品/稀有度。"""
+    conn = get_conn()
+    r = conn.execute(
+        "SELECT * FROM gundam_cards WHERE id=?", (card_id,)).fetchone()
+    conn.close()
+    if not r:
+        abort(404)
+    return jsonify({
+        "game": "gcg", "id": r["id"], "name": r["name_tc"],
+        "color": r["color"], "card_type": r["card_type"],
+        "level": r["level"], "cost": r["cost"], "ap": r["ap"], "hp": r["hp"],
+        "terrain": r["terrain"], "traits": r["traits"], "source": r["source"],
+        "rarity": r["rarity"], "pack": r["pack"],
+        "image_url": f"/img/gcg/{r['id']}",
+        "official_url":
+            f"https://www.gundam-gcg.com/zh-tw/cards/detail.php?detailSearch={r['id']}",
+    })
 
 
 @app.get("/api/card/<game>/<int:card_id>")
@@ -481,13 +573,22 @@ def api_card_detail(game, card_id):
 def api_cards():
     """批次取卡片資料（分享連結還原用）。?game=ygo&ids=1,2,3"""
     game = request.args.get("game", "pkm")
-    try:
-        ids = [int(x) for x in (request.args.get("ids") or "").split(",") if x]
-    except ValueError:
-        return jsonify({"cards": []})
-    ids = ids[:40]
+    raw_ids = [x for x in (request.args.get("ids") or "").split(",") if x][:40]
     conn = get_conn()
     cards = []
+    if game == "gcg":  # 鋼彈卡號是字串
+        for cid in raw_ids:
+            r = conn.execute(
+                "SELECT * FROM gundam_cards WHERE id=?", (cid,)).fetchone()
+            if r:
+                cards.append(gcg_card_dict(r))
+        conn.close()
+        return jsonify({"cards": cards})
+    try:
+        ids = [int(x) for x in raw_ids]
+    except ValueError:
+        conn.close()
+        return jsonify({"cards": []})
     for cid in ids:
         if game == "ygo":
             r = conn.execute("SELECT * FROM ygo_cards WHERE id=?", (cid,)).fetchone()
@@ -606,6 +707,21 @@ def api_import_deck():
         if not name:
             unmatched.append(raw)
             continue
+        if game == "gcg":
+            row = conn.execute(
+                "SELECT * FROM gundam_cards WHERE detail_fetched=1 "
+                "AND (id=? OR name_tc=?) ORDER BY id LIMIT 1",
+                (name.upper(), name)).fetchone()
+            if row is None:
+                row = conn.execute(
+                    "SELECT * FROM gundam_cards WHERE detail_fetched=1 "
+                    "AND name_tc LIKE ? ORDER BY id LIMIT 1",
+                    (f"%{name}%",)).fetchone()
+            if row:
+                add(gcg_card_dict(row), qty)
+            else:
+                unmatched.append(raw)
+            continue
         if game == "ygo":
             hits = search_ygo(conn, name, limit=1)
             if hits:
@@ -683,6 +799,17 @@ def api_compare():
                     "lang": (it.get("lang") or None),
                     "art": (it.get("art") or None), "qty": qty,
                 })
+        elif game == "gcg":
+            row = conn.execute(
+                "SELECT * FROM gundam_cards WHERE id=?", (it["card_id"],)).fetchone()
+            if row:
+                wants.append({
+                    "key": f"gcg:{row['id']}", "game": "gcg", "card_id": row["id"],
+                    "name": row["name_tc"], "names": None,
+                    "collector_number": row["id"],
+                    "rarity": row["rarity"],
+                    "lang": (it.get("lang") or None), "art": None, "qty": qty,
+                })
         else:
             row = conn.execute(
                 "SELECT * FROM cards WHERE id=?", (it["card_id"],)).fetchone()
@@ -710,6 +837,9 @@ def api_compare():
                 listings = find_listings_for_ygo(
                     [n for n in w["names"] if n], w["rarity"], w["lang"],
                     codes=w.get("codes"), art=w.get("art"))
+            elif w["game"] == "gcg":
+                listings = find_listings_for_gundam(
+                    w["name"], w["card_id"], w["lang"])
             else:
                 listings = find_listings_for_card(
                     w["name"], w["collector_number"], w["rarity"])
@@ -860,7 +990,8 @@ def api_compare():
         "wishlist": [{**want_info(w), "history": w["history"],
                       "history_series": w["history_series"],
                       "market": w["market"],
-                      "image_url": (ygo_img_url(w["card_id"]) if w["game"] == "ygo" else f"/img/pkm/{w['card_id']}")}
+                      "image_url": f"/img/{w['game']}/{w['card_id']}"
+                          if w["game"] != "ygo" else ygo_img_url(w["card_id"])}
                      for w in wants],
         "sellers": seller_results[:20],
         "pair": pair_best,

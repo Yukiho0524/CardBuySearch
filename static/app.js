@@ -2,8 +2,9 @@
 const $ = (sel) => document.querySelector(sel);
 const wishlist = new Map(); // key "game:id" -> {card, qty, rarity, lang}
 let ygoOptions = { rarities: [], langs: [] };
+let gcgOptions = { langs: [] };
 
-const GAME_LABEL = { pkm: "寶可夢", ygo: "遊戲王" };
+const GAME_LABEL = { pkm: "寶可夢", ygo: "遊戲王", gcg: "鋼彈" };
 
 function currentGame() {
   return document.querySelector('input[name="game"]:checked').value;
@@ -25,8 +26,13 @@ async function loadYgoOptions() {
   const res = await fetch("/api/ygo/options");
   ygoOptions = await res.json();
 }
+async function loadGcgOptions() {
+  const res = await fetch("/api/gcg/options");
+  gcgOptions = await res.json();
+}
 loadRarities();
 loadYgoOptions();
+loadGcgOptions();
 restoreWishlist();
 startBrowse();  // 開頁預設進入「全部卡片」一覽（含篩選列）
 
@@ -44,11 +50,13 @@ $("#themeToggle").textContent =
 
 document.querySelectorAll('input[name="game"]').forEach((el) =>
   el.addEventListener("change", () => {
-    const ygo = currentGame() === "ygo";
-    $("#raritySelect").style.display = ygo ? "none" : "";
-    $("#searchInput").placeholder = ygo
-      ? "卡名（例：灰流麗、増殖するG，中日文皆可）"
-      : "卡名或編號（例：噴火龍、094/081）";
+    const game = currentGame();
+    $("#raritySelect").style.display = game === "pkm" ? "" : "none";
+    $("#searchInput").placeholder = {
+      ygo: "卡名（例：灰流麗、増殖するG，中日文皆可）",
+      gcg: "卡名或卡號（例：高達、GD01-001）",
+      pkm: "卡名或編號（例：噴火龍、094/081）",
+    }[game];
     $("#searchInput").value = "";
     startBrowse();  // 切換遊戲直接進入該遊戲的全卡一覽
   }));
@@ -107,6 +115,15 @@ function renderFilterBar() {
               filterSelect("race", "種族", opts.races, cur.race);
     }
     bar.innerHTML = html + '<button class="clear-filters">清除條件</button>';
+  } else if (game === "gcg") {
+    bar.innerHTML =
+      filterSelect("color", "顏色", opts.colors, cur.color) +
+      filterSelect("type", "卡牌類型", opts.types, cur.type) +
+      filterSelect("lv", "等級", opts.levels, cur.lv) +
+      filterSelect("source", "作品", opts.sources, cur.source) +
+      filterSelect("pack", "系列", opts.packs, cur.pack) +
+      filterSelect("rarity", "稀有度", opts.rarities, cur.rarity) +
+      '<button class="clear-filters">清除條件</button>';
   } else {
     bar.innerHTML =
       filterSelect("kind", "卡片大類", opts.kinds, cur.kind) +
@@ -211,13 +228,22 @@ $("#imgInput").addEventListener("change", async (e) => {
 
 function keyOf(c) { return `${c.game}:${c.id}`; }
 
+// 遊戲王預設日紙、鋼彈預設日版（台灣主流），寶可夢無版本
+function defaultLang(game) {
+  return game === "ygo" ? "日紙" : game === "gcg" ? "日版" : "";
+}
+function newWishItem(card, qty) {
+  return { card, qty: qty || 1, rarity: "", art: "",
+           lang: defaultLang(card.game), cardRarities: null };
+}
+
 function cardEl(c) {
   const div = document.createElement("div");
   div.className = "card-item";
   div.dataset.key = keyOf(c);
   const inList = wishlist.has(keyOf(c));
-  const sub = c.game === "ygo"
-    ? `${c.name_jp || ""}`
+  const sub = c.game === "ygo" ? `${c.name_jp || ""}`
+    : c.game === "gcg" ? `${c.collector_number || ""} ${c.color || ""}`
     : `${c.set_alpha || ""} ${c.collector_number || ""}`;
   div.innerHTML = `
     <div class="card-click" title="查看卡片詳情">
@@ -232,10 +258,7 @@ function cardEl(c) {
   div.querySelector(".card-click").addEventListener("click", () =>
     openCardModal(c.game, c.id));
   div.querySelector("button").addEventListener("click", (e) => {
-    // 遊戲王預設日紙（台灣玩家主流），可在清單改成韓紙/英紙/不限
-    const item = { card: c, qty: 1, rarity: "", art: "",
-                   lang: c.game === "ygo" ? "日紙" : "", cardRarities: null };
-    wishlist.set(keyOf(c), item);
+    wishlist.set(keyOf(c), newWishItem(c));
     e.target.disabled = true;
     e.target.textContent = "已加入";
     renderWishlist();
@@ -283,8 +306,32 @@ async function openCardModal(game, cardId) {
     return;
   }
   $("#modalImg").src = d.image_url;
-  $("#modalInfo").innerHTML = d.game === "ygo" ? ygoDetailHtml(d) : pkmDetailHtml(d);
+  $("#modalInfo").innerHTML = d.game === "ygo" ? ygoDetailHtml(d)
+    : d.game === "gcg" ? gcgDetailHtml(d) : pkmDetailHtml(d);
   bindModalActions(d);
+}
+
+function gcgDetailHtml(d) {
+  const chips = [];
+  const push = (v) => v && chips.push(`<span class="badge-chip">${esc(String(v))}</span>`);
+  push(d.color); push(d.card_type);
+  if (d.level != null) chips.push(`<span class="badge-chip stat">Lv ${d.level}</span>`);
+  if (d.cost != null) chips.push(`<span class="badge-chip">COST ${d.cost}</span>`);
+  if (d.ap != null || d.hp != null)
+    chips.push(`<span class="badge-chip stat">AP ${d.ap ?? "-"}／HP ${d.hp ?? "-"}</span>`);
+  const rows = [["卡號", d.id], ["稀有度", d.rarity], ["地形", d.terrain],
+    ["特徵", d.traits], ["來源作品", d.source]]
+    .filter(([, v]) => v)
+    .map(([k, v]) => `<tr><th>${k}</th><td>${esc(String(v))}</td></tr>`).join("");
+  return `
+    <h2>${esc(d.name)}</h2>
+    <p class="modal-sub">${esc(d.id)}　·　鋼彈卡片遊戲</p>
+    <div class="badge-row">${chips.join("")}</div>
+    <div class="modal-section"><table class="printings-table">${rows}</table></div>
+    <div class="modal-actions">
+      <button class="add">＋ 加入願望清單</button>
+      <a class="official" href="${esc(d.official_url)}" target="_blank" rel="noopener">官方卡表</a>
+    </div>`;
 }
 
 function esc(s) {
@@ -364,6 +411,9 @@ function bindModalActions(d) {
   const card = d.game === "ygo"
     ? { id: d.id, game: "ygo", name: d.name, name_jp: d.name_jp,
         collector_number: null, rarity: null, image_url: d.image_url }
+    : d.game === "gcg"
+    ? { id: d.id, game: "gcg", name: d.name, collector_number: d.id,
+        rarity: d.rarity, color: d.color, image_url: d.image_url }
     : { id: d.id, game: "pkm", name: d.name, set_alpha: d.set_alpha,
         collector_number: d.collector_number, rarity: d.rarity,
         image_url: d.image_url };
@@ -372,9 +422,7 @@ function bindModalActions(d) {
     addBtn.textContent = "已在清單中";
   }
   addBtn.addEventListener("click", () => {
-    wishlist.set(keyOf(card), { card, qty: 1, rarity: "", art: "",
-                                lang: card.game === "ygo" ? "日紙" : "",
-                                cardRarities: null });
+    wishlist.set(keyOf(card), newWishItem(card));
     if (card.game === "ygo") loadCardRarities(keyOf(card), card.id);
     renderWishlist();
     addBtn.disabled = true;
@@ -406,9 +454,7 @@ $("#importBtn").addEventListener("click", async () => {
       if (wishlist.has(key)) {
         wishlist.get(key).qty += it.qty;
       } else {
-        wishlist.set(key, { card: it.card, qty: it.qty, rarity: "", art: "",
-                            lang: it.card.game === "ygo" ? "日紙" : "",
-                            cardRarities: null });
+        wishlist.set(key, newWishItem(it.card, it.qty));
         if (it.card.game === "ygo") loadCardRarities(key, it.card.id);
       }
       added++;
@@ -532,7 +578,15 @@ function renderWishlist() {
                     <select class="opt lang">${lOpts.join("")}</select>
                     <select class="opt art">${aOpts.join("")}</select>
                   </div>`;
+    } else if (c.game === "gcg") {
+      // 鋼彈：僅版本（日版/美版），稀有度是卡片本身固定屬性不需選
+      const lOpts = ['<option value="">版本不限</option>',
+        ...gcgOptions.langs.map((l) =>
+          `<option value="${l}" ${item.lang === l ? "selected" : ""}>${l}</option>`)];
+      optsHtml = `<div class="opts"><select class="opt lang">${lOpts.join("")}</select></div>`;
     }
+    const subText = c.game === "ygo" ? (c.name_jp || "")
+      : `${c.collector_number || ""}${c.rarity ? "・" + c.rarity : ""}`;
     li.innerHTML = `
       <img src="${c.image_url || ""}" alt="">
       <div class="winfo">
@@ -541,7 +595,7 @@ function renderWishlist() {
           <input class="qty" type="number" min="1" max="9" value="${item.qty}">
           <button class="rm" title="移除">✕</button>
         </div>
-        <small>${c.game === "ygo" ? (c.name_jp || "") : `${c.collector_number || ""} ${c.rarity ? "・" + c.rarity : ""}`}</small>
+        <small>${subText}</small>
         ${optsHtml}
       </div>`;
     li.querySelector(".qty").addEventListener("change", (e) => {

@@ -368,6 +368,59 @@ def find_listings_for_ygo(names, rarity=None, lang=None, limit=40, codes=None,
     return results
 
 
+# 鋼彈 GCG 版本（發行語言）：日版／美版（英文）。無韓版。
+GUNDAM_LANGS = {
+    "日版": ["日版", "日文版", "日紙", "日本", "JAPAN", "JP"],
+    "美版": ["美版", "英文版", "英版", "美英", "ENGLISH", "EN"],
+}
+
+
+def find_listings_for_gundam(name, card_no, lang=None, limit=40):
+    """鋼彈 GCG：搜露天並比對。
+
+    卡號（GD01-001）是最強訊號、賣家幾乎都會標；卡名（鋼彈/高達互通）為輔。
+    版本（日版/美版）在標題比對階段過濾。
+    """
+    queries = [f"鋼彈 {card_no}", f"鋼彈 {name}"]
+    seen_ids, results = set(), []
+    for q in queries:
+        try:
+            products = search_products(q, limit=limit)
+        except Exception:
+            continue
+        for p in products:
+            if p["ProdId"] in seen_ids:
+                continue
+            seen_ids.add(p["ProdId"])
+            title = p.get("ProdName", "")
+            t = _squash(title)
+            no_hit = _squash(card_no) in t
+            # 卡名比對：鋼彈/高達視為等義，去掉後比對其餘名稱
+            name_norm = _squash(name).replace("鋼彈", "").replace("高達", "")
+            title_norm = t.replace("鋼彈", "").replace("高達", "")
+            name_hit = bool(name_norm) and name_norm in title_norm
+            if not (no_hit or name_hit):
+                continue
+            if any(w in title for w in EXCLUDE_WORDS):
+                continue
+            # 版本過濾：明標他版排除；未標示或標對版本則保留
+            conf = "strong" if no_hit else "weak"
+            if lang:
+                aliases = GUNDAM_LANGS.get(lang, [lang])
+                others = [a for lbl, al in GUNDAM_LANGS.items()
+                          if lbl != lang for a in al]
+                if any(a in title for a in aliases):
+                    pass
+                elif any(a in title for a in others):
+                    continue  # 明標了別的版本
+                else:
+                    conf = "weak" if conf == "strong" else "maybe"
+            results.append(_listing_dict(p, conf))
+        if len(results) >= 25:
+            break
+    return results
+
+
 NICK_RE = re.compile(r'"nick":"([^"]+)"')
 BOARD_NAME_RE = re.compile(r'"boardName":"([^"]*)"')
 CREDIT_RATE_RE = re.compile(r'"creditRate":([\d.]+)')

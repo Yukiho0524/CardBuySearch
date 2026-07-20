@@ -1,7 +1,7 @@
 # CardBuySearch — TCG 缺卡湊齊比價
 
 幫 TCG 玩家找出「能一次買齊整套缺卡」的賣家。
-支援：**寶可夢繁中卡**（官方卡查資料）＋ **遊戲王**（百鴿 ygocdb 資料）× **露天拍賣**（即時比價）。
+支援：**寶可夢繁中卡**（官方卡查）＋ **遊戲王**（百鴿 ygocdb）＋ **鋼彈 GCG**（官方繁中站）× **露天拍賣**（即時比價）。
 
 ## 功能
 
@@ -53,6 +53,12 @@ python crawler/pokemon.py --keyword 噴火龍
 
 ```
 python crawler/yugioh.py
+```
+
+鋼彈 GCG（約 785 張，來源：官方繁中站 gundam-gcg.com/zh-tw，可斷點續爬）：
+
+```
+python crawler/gundam.py
 ```
 
 爬蟲有 0.6 秒禮貌延遲並支援斷點續爬，中斷後重跑會接續。
