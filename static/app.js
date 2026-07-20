@@ -536,12 +536,14 @@ function renderWishlist() {
     li.innerHTML = `
       <img src="${c.image_url || ""}" alt="">
       <div class="winfo">
-        <span class="game-icon">${GAME_LABEL[c.game]}</span> <b>${c.name}</b><br>
+        <div class="wtop">
+          <span class="wname"><span class="game-icon">${GAME_LABEL[c.game]}</span> <b>${c.name}</b></span>
+          <input class="qty" type="number" min="1" max="9" value="${item.qty}">
+          <button class="rm" title="移除">✕</button>
+        </div>
         <small>${c.game === "ygo" ? (c.name_jp || "") : `${c.collector_number || ""} ${c.rarity ? "・" + c.rarity : ""}`}</small>
         ${optsHtml}
-      </div>
-      <input class="qty" type="number" min="1" max="9" value="${item.qty}">
-      <button class="rm" title="移除">✕</button>`;
+      </div>`;
     li.querySelector(".qty").addEventListener("change", (e) => {
       item.qty = Math.max(1, parseInt(e.target.value) || 1);
       saveWishlist();
