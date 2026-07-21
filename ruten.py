@@ -380,7 +380,11 @@ def find_listings_for_gundam(name, card_no, lang=None, limit=40):
 
     卡號（GD01-001）是最強訊號、賣家幾乎都會標；卡名（鋼彈/高達互通）為輔。
     版本（日版/美版）在標題比對階段過濾。
+
+    異圖平行卡（GD01-001_p1）：賣家不會標 _pN 後綴，還原成基礎卡號查詢／比對，
+    與基礎卡共用同一批露天商品（露天上異圖標法不一，不再細分）。
     """
+    card_no = re.sub(r"_p\d+$", "", card_no)
     queries = [f"鋼彈 {card_no}", f"鋼彈 {name}"]
     seen_ids, results = set(), []
     for q in queries:

@@ -328,6 +328,14 @@ function gcgDetailHtml(d) {
     ["特徵", d.traits], ["來源作品", d.source]]
     .filter(([, v]) => v)
     .map(([k, v]) => `<tr><th>${k}</th><td>${esc(String(v))}</td></tr>`).join("");
+  const variants = (d.variants || []).map((v) => `
+    <li class="${v.id === d.id ? "current" : ""}">
+      <a href="#" data-vid="${esc(v.id)}" data-vgame="gcg">
+        <span>${v.is_alt ? "異圖" : "原圖"}</span>
+        ${v.rarity ? `<span class="rarity-tag">${esc(v.rarity)}</span>` : ""}
+        ${v.id === d.id ? "<span>← 目前</span>" : ""}
+      </a>
+    </li>`).join("");
   return `
     <h2>${esc(d.name)}</h2>
     <p class="modal-sub">${esc(d.id)}　·　鋼彈卡片遊戲</p>
@@ -335,6 +343,9 @@ function gcgDetailHtml(d) {
     ${d.effect ? `<div class="modal-section"><h4>效果</h4>
       <div class="card-effect">${esc(d.effect)}</div></div>` : ""}
     <div class="modal-section"><table class="printings-table">${rows}</table></div>
+    ${(d.variants || []).length > 1 ? `<div class="modal-section">
+      <h4>異圖版本（${d.variants.length}）——挑你要收的版本</h4>
+      <ul class="variant-list" style="max-height:200px;overflow-y:auto">${variants}</ul></div>` : ""}
     <div class="modal-actions">
       <button class="add">＋ 加入願望清單</button>
       <a class="official" href="${esc(d.official_url)}" target="_blank" rel="noopener">官方卡表</a>
@@ -435,11 +446,12 @@ function bindModalActions(d) {
     addBtn.disabled = true;
     addBtn.textContent = "已加入 ✓";
   });
-  // 寶可夢：切換同名卡版本
+  // 切換版本：寶可夢＝同名卡、鋼彈＝異圖（gcg 卡號是字串，不可 parseInt）
   modal.querySelectorAll("[data-vid]").forEach((a) =>
     a.addEventListener("click", (e) => {
       e.preventDefault();
-      openCardModal("pkm", parseInt(a.dataset.vid));
+      const g = a.dataset.vgame || "pkm";
+      openCardModal(g, g === "gcg" ? a.dataset.vid : parseInt(a.dataset.vid));
     }));
 }
 

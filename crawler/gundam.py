@@ -2,7 +2,9 @@
 
 流程：
   1. 逐系列（GD01-05、ST01-09）以 ?freeword=<系列> 取卡號清單
+     （含異圖平行卡：卡號帶 _p1、_p2 後綴，官方另有獨立 detail 頁）
   2. 每張卡抓 detail.php 解析欄位（顏色/類型/Lv/COST/AP/HP/特徵/作品/稀有度）
+     異圖卡稀有度會帶插畫記號（如「LR +」「LR ++」）
   3. 下載官方繁中卡圖（webp）轉存 jpg 快取
 
 可斷點續爬（略過 detail_fetched=1）。
@@ -26,6 +28,10 @@ from PIL import Image
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from db import get_conn
 
+# Windows 主控台預設 cp950，卡名含日文「・」等字會讓 print 崩潰 → 改 UTF-8 容錯
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 BASE = "https://www.gundam-gcg.com"
 LIST_URL = BASE + "/zh-tw/cards/index.php?freeword={pack}"
 DETAIL_URL = BASE + "/zh-tw/cards/detail.php?detailSearch={cid}"
@@ -34,7 +40,8 @@ IMG_CACHE = Path(__file__).parent.parent / "data" / "img_cache" / "gcg"
 PACKS = [f"GD0{i}" for i in range(1, 6)] + [f"ST0{i}" for i in range(1, 10)]
 DELAY = 0.5
 
-CARD_NO_RE = re.compile(r"[GS][DT]\d+-\d+")
+# 卡號含異圖平行卡後綴（如 GD01-001、GD01-001_p1）；greedy 會吃到完整後綴
+CARD_NO_RE = re.compile(r"[GS][DT]\d+-\d+(?:_p\d+)?")
 
 session = requests.Session()
 session.headers["User-Agent"] = (
@@ -62,7 +69,8 @@ def parse_detail(html, cid):
     h1 = soup.select_one("h1")
     out["name_tc"] = h1.get_text(strip=True) if h1 else None
     rar = soup.select_one(".rarity")
-    out["rarity"] = rar.get_text(strip=True) if rar else None
+    # 異圖卡稀有度會夾大量空白（如「LR                +」）→ 收斂成「LR +」
+    out["rarity"] = re.sub(r"\s+", " ", rar.get_text(" ", strip=True)) if rar else None
     fields = {}
     for dt in soup.select("dt"):
         dd = dt.find_next_sibling("dd")

@@ -58,8 +58,8 @@ def index():
 
 @app.get("/img/gcg/<card_id>")
 def img_gcg(card_id):
-    """鋼彈卡圖：爬蟲已抓好存在 data/img_cache/gcg/{卡號}.jpg。"""
-    if not re.fullmatch(r"[A-Z]{2}\d+-\d+", card_id):
+    """鋼彈卡圖：爬蟲已抓好存在 data/img_cache/gcg/{卡號}.jpg（含異圖 _pN）。"""
+    if not re.fullmatch(r"[A-Z]{2}\d+-\d+(?:_p\d+)?", card_id):
         abort(404)
     cache = IMG_CACHE / "gcg" / f"{card_id}.jpg"
     if not cache.exists():
@@ -561,9 +561,18 @@ def api_card_detail_gcg(card_id):
     conn = get_conn()
     r = conn.execute(
         "SELECT * FROM gundam_cards WHERE id=?", (card_id,)).fetchone()
-    conn.close()
     if not r:
+        conn.close()
         abort(404)
+    # 異圖版本：基礎卡號（去掉 _pN）＋其所有平行卡，供彈窗切換
+    base_id = re.sub(r"_p\d+$", "", r["id"])
+    variants = [{"id": v["id"], "rarity": v["rarity"],
+                 "is_alt": v["id"] != base_id}
+                for v in conn.execute(
+                    "SELECT id, rarity FROM gundam_cards "
+                    "WHERE id=? OR id GLOB ? ORDER BY id",
+                    (base_id, base_id + "_p*"))]
+    conn.close()
     return jsonify({
         "game": "gcg", "id": r["id"], "name": r["name_tc"],
         "color": r["color"], "card_type": r["card_type"],
@@ -571,6 +580,7 @@ def api_card_detail_gcg(card_id):
         "terrain": r["terrain"], "traits": r["traits"], "source": r["source"],
         "effect": r["effect"], "rarity": r["rarity"], "pack": r["pack"],
         "image_url": f"/img/gcg/{r['id']}",
+        "variants": variants,
         "official_url":
             f"https://www.gundam-gcg.com/zh-tw/cards/detail.php?detailSearch={r['id']}",
     })
