@@ -15,6 +15,8 @@
 - **雙賣家組合**（單一賣家湊不齊、但兩家合買更省時）
 - **拆買基準**（每張卡各買最便宜的，當比較基準）
 
+**第三大功能——到價通知**：使用者為想要的卡設定目標價，程式定期到露天查詢，當最低價跌破目標時透過**使用者自己填的 Discord Webhook** 推播通知（見第九節）。
+
 **支援三款遊戲**：寶可夢（繁中）、遊戲王、鋼彈卡片遊戲 GCG。
 
 ---
@@ -79,6 +81,10 @@
 | `GET /api/cards?game=&ids=` | 批次取卡（分享連結還原用） |
 | `GET /img/<game>/<id>` | 卡圖代理＋磁碟快取 |
 | `GET /api/ygo/options`、`/api/ygo/printings/<id>`、`/api/gcg/options`、`/api/rarities` | 各種選項 |
+| `GET/POST /api/alerts`、`POST/DELETE /api/alerts/<id>` | 到價通知增查改刪 |
+| `POST /api/settings/webhook`、`/api/settings/webhook/test` | 設定 Discord Webhook／送測試訊息 |
+| `POST /api/alerts/check` | 立即檢查一次（背景執行緒跑，前端輪詢 `GET /api/alerts` 的 `checking`） |
+| `POST /api/quote` | 單張卡即時報價（設目標價前參考用；與比價共用 `_listing_cache`） |
 
 ---
 
@@ -128,6 +134,8 @@ python crawler/imghash.py --game ygo|pkm   # 以圖搜卡索引
 
 **手動全量更新**：`python crawler/update_all.py`
 
+**到價通知檢查**：`crawler/check_alerts.py` 對所有啟用中的通知跑露天、達標則推播。要背景自動跑需自行註冊 Windows 排程（見第九節），日誌 `data/alerts.log`。手動：`python crawler/check_alerts.py`。網頁上的「立即檢查一次」則走 `/api/alerts/check`。
+
 ---
 
 ## 七、已知限制 / 可能的下一步
@@ -146,3 +154,29 @@ python crawler/imghash.py --game ygo|pkm   # 以圖搜卡索引
 - 每完成一個階段就 commit＋push。
 - 註解、變數用繁體中文，與現有風格一致。
 - 資料檔可手動編輯：`ygo_aliases.json`（遊戲王譯名別名）、`pkm_products.json`（寶可夢產品名）。
+
+---
+
+## 九、到價通知（Discord 推播）
+
+**檔案**：`notify.py`（送 Discord webhook）、`alerts.py`（檢查邏輯，端點與排程共用）、`crawler/check_alerts.py`（排程 CLI）。資料表 `price_alerts`＋`app_settings`（存 webhook）。前端在「🔔 到價通知」面板，願望清單每張卡有 🔔 可設定。
+
+**流程**：使用者在自己的 Discord 伺服器建 Webhook（伺服器設定 → 整合 → Webhook），把網址填進網頁 → 存進 `app_settings`。為某張卡設目標價 → 存進 `price_alerts`（沿用願望清單當下選的稀有度/紙種/版本條件）。檢查時 `alerts._search` 依條件重跑露天（**與 `/api/compare` 同一套比對邏輯**：遊戲王用官方卡號＋多譯名、鋼彈還原基礎卡號、寶可夢用卡名＋編號），取最低價與目標比。
+
+**幾個設計重點**：
+1. **只採信 strong/weak 商品**（`TRIGGER_CONFIDENCES`），排除 `maybe`（標題沒標稀有度/紙種，觸發通知容易誤報）。
+2. **防重複通知**：達標推播一次後標記 `notified=1`；價格回到目標以上時自動 `notified=0` 重置，之後再跌破才會再推播。使用者也可手動「重設」或「暫停」。
+3. **送失敗不吞通知**：有設 webhook 但 Discord 送失敗時**不**標記 `notified`，下次檢查再試；沒設 webhook 則仍標記（只當站內「已達標」狀態，不外送）。
+4. **Webhook 只收 Discord 官方網址**（`DISCORD_WEBHOOK_RE` 驗證），回傳前端時遮罩（只露結尾 6 碼），避免 token 外流。
+5. **順便累積歷史價**：每次檢查把最低價寫進 `price_history`，與比價共用同一張表，即使沒開網頁比價也會累積走勢。
+6. **card_id 存 TEXT**：相容鋼彈字串卡號（`GD01-001`）；寶可夢/遊戲王的數字 id 以字串存，查詢靠 SQLite 型別親和自動轉換。
+
+**排程（選用，要背景自動跑才需要）**——比照週更新那套，自行註冊 Windows 排程（電腦要開著）：
+```
+schtasks /Create /TN CardBuySearch-Alerts /SC HOURLY /MO 3 ^
+  /TR "\"C:\path\to\python.exe\" \"%CD%\crawler\check_alerts.py\""
+```
+移除：`schtasks /Delete /TN CardBuySearch-Alerts /F`。日誌 `data/alerts.log`。
+不註冊排程也能用——按網頁上的「🔄 立即檢查一次」手動觸發。
+
+**已知取捨**：檢查頻率越高越快通知、但對露天請求量越大（非官方 API，別太密）。目前建議 3 小時一次。多筆通知是逐一查露天（每筆數秒），通知很多時「立即檢查」會跑一陣子（背景執行、前端輪詢顯示進度）。

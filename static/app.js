@@ -612,6 +612,7 @@ function renderWishlist() {
         <div class="wtop">
           <span class="wname"><span class="game-icon">${GAME_LABEL[c.game]}</span> <b>${c.name}</b></span>
           <input class="qty" type="number" min="1" max="9" value="${item.qty}">
+          <button class="bell" title="設定到價通知">🔔</button>
           <button class="rm" title="移除">✕</button>
         </div>
         <small>${subText}</small>
@@ -627,6 +628,7 @@ function renderWishlist() {
     if (lang) lang.addEventListener("change", (e) => { item.lang = e.target.value; saveWishlist(); });
     const art = li.querySelector(".art");
     if (art) art.addEventListener("change", (e) => { item.art = e.target.value; saveWishlist(); });
+    li.querySelector(".bell").addEventListener("click", (e) => addAlertFromWish(item, e.currentTarget));
     li.querySelector(".rm").addEventListener("click", () => {
       wishlist.delete(key);
       renderWishlist();
@@ -854,3 +856,213 @@ function renderCompare(data) {
     box.innerHTML = '<p class="empty">露天上找不到符合這些卡片條件的商品。</p>';
   }
 }
+
+// ---------- 到價通知 ----------
+let alertPoll = null;
+
+// 從願望清單某張卡建立通知：沿用該卡目前選的稀有度/紙種/版本條件
+async function addAlertFromWish(item, bellBtn) {
+  const c = item.card;
+  const cond = [item.rarity, item.lang, item.art].filter(Boolean).join("・");
+  // 先查一次目前露天最低價，給使用者參考、並當預設值（查露天需數秒）
+  let quote = null;
+  if (bellBtn) { bellBtn.disabled = true; bellBtn.textContent = "⏳"; }
+  try {
+    const res = await fetch("/api/quote", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        game: c.game, card_id: c.id,
+        rarity: item.rarity || null, lang: item.lang || null, art: item.art || null,
+      }),
+    });
+    quote = await res.json();
+  } catch (e) { /* 查不到就讓使用者直接填 */ }
+  finally { if (bellBtn) { bellBtn.disabled = false; bellBtn.textContent = "🔔"; } }
+
+  let hint, def = "";
+  if (quote && quote.min_price != null) {
+    hint = `目前露天最低約 ${fmt(quote.min_price)}（${quote.reliable_count} 筆可靠報價）`;
+    def = String(quote.min_price);
+  } else {
+    hint = "目前露天查無符合的商品——仍可設定，之後有貨且達標會通知。";
+  }
+  const ans = prompt(
+    `為「${c.name}」${cond ? "（" + cond + "）" : ""}設定目標價（NT$）\n` +
+    `${hint}\n露天最低價跌到這個價格以下時通知你：`, def);
+  if (ans === null) return;
+  const target = parseInt(ans.replace(/[^\d]/g, ""), 10);
+  if (!target || target <= 0) { alert("請輸入大於 0 的數字"); return; }
+  try {
+    const res = await fetch("/api/alerts", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        game: c.game, card_id: c.id, target_price: target,
+        rarity: item.rarity || null, lang: item.lang || null, art: item.art || null,
+      }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    await loadAlerts();
+    $("#alertSection").scrollIntoView({ behavior: "smooth" });
+  } catch (err) {
+    alert("設定失敗：" + err.message);
+  }
+}
+
+async function loadAlerts() {
+  let data;
+  try {
+    const res = await fetch("/api/alerts");
+    data = await res.json();
+  } catch (e) { return; }
+  // Webhook 狀態
+  const wStatus = $("#webhookStatus");
+  if (data.webhook_set) {
+    wStatus.innerHTML = `✅ 已設定 Webhook（${esc(data.webhook_hint)}）`;
+    if (!document.activeElement || document.activeElement.id !== "webhookInput") {
+      if (!$("#webhookInput").value) $("#webhookInput").placeholder = `已設定 ${data.webhook_hint}`;
+    }
+  } else {
+    wStatus.textContent = "尚未設定 Webhook——設定後達標才會推播到 Discord。";
+  }
+  renderAlerts(data.alerts);
+  // 背景檢查中：顯示提示並輪詢，結束後停止
+  const cs = $("#alertCheckStatus");
+  if (data.checking) {
+    cs.innerHTML = '<span class="spinner"></span>檢查中，請稍候…';
+    $("#alertCheckBtn").disabled = true;
+    if (!alertPoll) alertPoll = setInterval(loadAlerts, 4000);
+  } else {
+    $("#alertCheckBtn").disabled = false;
+    if (alertPoll) {
+      clearInterval(alertPoll); alertPoll = null;
+      cs.textContent = "檢查完成。";
+    }
+  }
+}
+
+function renderAlerts(alerts) {
+  $("#alertCount").textContent = alerts.length;
+  const ul = $("#alertList");
+  ul.innerHTML = "";
+  if (!alerts.length) {
+    ul.innerHTML = '<li class="empty">還沒有到價通知——到願望清單按 🔔 新增。</li>';
+    return;
+  }
+  for (const a of alerts) {
+    const cond = [a.rarity, a.lang, a.art].filter(Boolean).join("・");
+    const li = document.createElement("li");
+    li.className = "alert-item" + (a.status === "paused" ? " paused" : "");
+    // 狀態文字
+    let state;
+    if (a.status === "paused") {
+      state = '<span class="a-state paused">已暫停</span>';
+    } else if (a.notified) {
+      state = `<span class="a-state hit">✅ 已達標 ${fmt(a.hit_price)}` +
+        (a.hit_url ? ` <a href="${a.hit_url}" target="_blank" rel="noopener">看商品</a>` : "") +
+        "</span>";
+    } else if (a.last_price != null) {
+      state = `<span class="a-state wait">等待中・目前最低 ${fmt(a.last_price)}</span>`;
+    } else if (a.last_checked) {
+      state = '<span class="a-state none">目前露天查無符合商品</span>';
+    } else {
+      state = '<span class="a-state none">尚未檢查</span>';
+    }
+    li.innerHTML = `
+      <img src="${a.image_url || ""}" alt="">
+      <div class="a-info">
+        <div class="a-top">
+          <span class="a-name"><span class="game-icon">${GAME_LABEL[a.game]}</span> <b>${esc(a.card_name || String(a.card_id))}</b></span>
+          <span class="a-target">目標 ${fmt(a.target_price)}</span>
+        </div>
+        <small>${cond ? esc(cond) + "　" : ""}${a.last_checked ? "最後檢查 " + esc(a.last_checked) : ""}</small>
+        <div class="a-bottom">
+          ${state}
+          <span class="a-actions">
+            <button data-act="edit">改目標價</button>
+            <button data-act="toggle">${a.status === "paused" ? "啟用" : "暫停"}</button>
+            ${a.notified ? '<button data-act="rearm">重設</button>' : ""}
+            <button data-act="del">刪除</button>
+          </span>
+        </div>
+      </div>`;
+    li.querySelector('[data-act="edit"]').addEventListener("click", () => editAlert(a));
+    li.querySelector('[data-act="toggle"]').addEventListener("click", () =>
+      updateAlert(a.id, { status: a.status === "paused" ? "active" : "paused" }));
+    const rearm = li.querySelector('[data-act="rearm"]');
+    if (rearm) rearm.addEventListener("click", () => updateAlert(a.id, { rearm: true }));
+    li.querySelector('[data-act="del"]').addEventListener("click", () => {
+      if (confirm(`刪除「${a.card_name}」的到價通知？`)) deleteAlert(a.id);
+    });
+    ul.appendChild(li);
+  }
+}
+
+async function editAlert(a) {
+  const ans = prompt(`修改「${a.card_name}」的目標價（NT$）：`, a.target_price);
+  if (ans === null) return;
+  const target = parseInt(String(ans).replace(/[^\d]/g, ""), 10);
+  if (!target || target <= 0) { alert("請輸入大於 0 的數字"); return; }
+  updateAlert(a.id, { target_price: target });
+}
+
+async function updateAlert(id, body) {
+  try {
+    const res = await fetch(`/api/alerts/${id}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    loadAlerts();
+  } catch (err) { alert("更新失敗：" + err.message); }
+}
+
+async function deleteAlert(id) {
+  await fetch(`/api/alerts/${id}`, { method: "DELETE" });
+  loadAlerts();
+}
+
+$("#webhookSave").addEventListener("click", async () => {
+  const url = $("#webhookInput").value.trim();
+  $("#webhookStatus").textContent = "儲存中…";
+  try {
+    const res = await fetch("/api/settings/webhook", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ webhook: url }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    $("#webhookInput").value = "";
+    loadAlerts();
+  } catch (err) { $("#webhookStatus").textContent = "儲存失敗：" + err.message; }
+});
+
+$("#webhookTest").addEventListener("click", async () => {
+  $("#webhookStatus").textContent = "傳送測試訊息中…";
+  try {
+    const res = await fetch("/api/settings/webhook/test", { method: "POST" });
+    const data = await res.json();
+    $("#webhookStatus").textContent = data.ok
+      ? "✅ 測試訊息已送出，請到 Discord 查看。"
+      : "❌ " + (data.error || "傳送失敗");
+  } catch (err) { $("#webhookStatus").textContent = "傳送失敗：" + err.message; }
+});
+
+$("#alertCheckBtn").addEventListener("click", async () => {
+  $("#alertCheckStatus").innerHTML = '<span class="spinner"></span>開始檢查…';
+  $("#alertCheckBtn").disabled = true;
+  try {
+    await fetch("/api/alerts/check", { method: "POST" });
+    loadAlerts();  // 進入輪詢模式
+  } catch (err) {
+    $("#alertCheckStatus").textContent = "檢查失敗：" + err.message;
+    $("#alertCheckBtn").disabled = false;
+  }
+});
+
+loadAlerts();

@@ -103,6 +103,35 @@ CREATE TABLE IF NOT EXISTS price_history (
     ts      TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
 );
 CREATE INDEX IF NOT EXISTS idx_price_hist ON price_history(game, card_id);
+
+-- 應用設定（鍵值，如 Discord Webhook 網址）
+CREATE TABLE IF NOT EXISTS app_settings (
+    key   TEXT PRIMARY KEY,
+    value TEXT
+);
+
+-- 到價通知：指定卡＋目標價，定期到露天檢查，達標時透過 Discord 推播。
+-- card_id 存為 TEXT 以相容鋼彈的字串卡號（如 GD01-001）。
+CREATE TABLE IF NOT EXISTS price_alerts (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    game         TEXT NOT NULL,          -- pkm / ygo / gcg
+    card_id      TEXT NOT NULL,
+    card_name    TEXT,                   -- 顯示用快照
+    image_url    TEXT,                   -- 顯示用快照（站內相對路徑）
+    rarity       TEXT,                   -- 查詢條件（可為 NULL）
+    lang         TEXT,
+    art          TEXT,
+    target_price INTEGER NOT NULL,       -- 目標價：露天最低 <= 此值即觸發
+    status       TEXT DEFAULT 'active',  -- active / paused
+    notified     INTEGER DEFAULT 0,      -- 已推播未重置（避免重複通知）
+    last_price   INTEGER,                -- 最近一次檢查到的最低價（顯示用）
+    hit_price    INTEGER,                -- 觸發當下的最低價
+    hit_title    TEXT,                   -- 觸發當下的露天商品標題
+    hit_url      TEXT,                   -- 觸發當下的露天商品連結
+    last_checked TEXT,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_price_alerts_status ON price_alerts(status);
 """
 
 

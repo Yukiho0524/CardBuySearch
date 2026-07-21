@@ -42,6 +42,13 @@ CONFIDENCE_ORDER = {"strong": 0, "weak": 1, "maybe": 2}
 _listing_cache = {}
 LISTING_CACHE_TTL = 600
 
+# 只允許 Discord 官方 Webhook 網址（避免被填成任意網址亂打）
+DISCORD_WEBHOOK_RE = re.compile(
+    r"^https://(?:canary\.|ptb\.)?discord(?:app)?\.com/api/webhooks/\d+/[\w-]+$")
+
+# 「立即檢查」的背景執行狀態（避免同時跑多次；供前端輪詢）
+_alert_check = {"running": False, "ts": None, "fired": 0}
+
 
 @app.get("/")
 def index():
@@ -826,6 +833,84 @@ def api_import_deck():
     })
 
 
+def _card_listings(conn, game, card_id, rarity, lang, art):
+    """單張卡查露天（濾價格/現貨、依信心＋價格排序）。
+
+    與 /api/compare 共用同一份 `_listing_cache`（10 分鐘），所以剛比過價或
+    設過通知的卡再查會直接命中快取，不重打露天。快取鍵的 card_id 型別與
+    compare 一致（寶可夢/遊戲王用數字、鋼彈用字串）才吃得到同一份快取。
+    """
+    key_id = int(card_id) if game in ("pkm", "ygo") else str(card_id)
+    cache_key = (game, key_id, rarity, lang, art)
+    cached = _listing_cache.get(cache_key)
+    if cached and time.time() - cached[0] < LISTING_CACHE_TTL:
+        return cached[1]
+    if game == "ygo":
+        row = conn.execute(
+            "SELECT * FROM ygo_cards WHERE id=?", (key_id,)).fetchone()
+        if not row:
+            return []
+        from konami import get_printings
+        printings = get_printings(conn, row["id"]) or []
+        codes = list(dict.fromkeys(
+            p["code"] for p in reversed(printings) if p["code"]))
+        names = [row["name_tc"], row["name_cnocg"], row["name_md"],
+                 row["name_sc"], row["name_jp"]]
+        listings = find_listings_for_ygo(
+            [n for n in names if n], rarity, lang, codes=codes, art=art)
+    elif game == "gcg":
+        row = conn.execute(
+            "SELECT * FROM gundam_cards WHERE id=?", (key_id,)).fetchone()
+        if not row:
+            return []
+        listings = find_listings_for_gundam(row["name_tc"], row["id"], lang)
+    else:
+        row = conn.execute(
+            "SELECT * FROM cards WHERE id=?", (key_id,)).fetchone()
+        if not row:
+            return []
+        listings = find_listings_for_card(
+            row["name"], row["collector_number"], rarity)
+    listings = [l for l in listings if l["price"] and (l["stock"] or 0) > 0]
+    listings.sort(key=lambda l: (CONFIDENCE_ORDER[l["confidence"]], l["price"]))
+    _listing_cache[cache_key] = (time.time(), listings)
+    return listings
+
+
+@app.post("/api/quote")
+def api_quote():
+    """設目標價前的即時報價：查這張卡（含條件）目前露天最低價。
+
+    輸入 {game, card_id, rarity?, lang?, art?}；回傳最低價與可靠報價筆數
+    （可靠＝strong/weak，與到價通知採信的一致）。查露天需數秒。
+    """
+    p = request.get_json(force=True)
+    game = p.get("game")
+    card_id = p.get("card_id")
+    if game not in ("pkm", "ygo", "gcg") or card_id in (None, ""):
+        return jsonify({"error": "缺少卡片資訊"}), 400
+    conn = get_conn()
+    try:
+        listings = _card_listings(
+            conn, game, card_id, p.get("rarity") or None,
+            p.get("lang") or None, p.get("art") or None)
+    except Exception as e:
+        conn.close()
+        return jsonify({"error": f"查詢失敗：{e}"}), 500
+    conn.close()
+    reliable = [l for l in listings if l["confidence"] in ("strong", "weak")]
+    reliable_min = min((l["price"] for l in reliable), default=None)
+    overall_min = min((l["price"] for l in listings), default=None)
+    return jsonify({
+        "ok": True,
+        "count": len(listings),
+        "reliable_count": len(reliable),
+        # 以可靠報價的最低價為主（與通知觸發一致），沒有才退回全部的最低
+        "min_price": reliable_min if reliable_min is not None else overall_min,
+        "reliable_min": reliable_min,
+    })
+
+
 @app.post("/api/compare")
 def api_compare():
     """核心功能：對願望清單跑露天搜尋，找出能一次湊齊最多卡的賣家。
@@ -1071,6 +1156,186 @@ def api_compare():
             "total": split_subtotal + split_shipping,
         },
     })
+
+
+# ==================== 到價通知 ====================
+
+
+def _get_setting(conn, key, default=None):
+    row = conn.execute(
+        "SELECT value FROM app_settings WHERE key=?", (key,)).fetchone()
+    return row["value"] if row else default
+
+
+def _set_setting(conn, key, value):
+    conn.execute(
+        "INSERT INTO app_settings (key, value) VALUES (?,?) "
+        "ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
+    conn.commit()
+
+
+def _mask_webhook(url):
+    """遮罩 Webhook（含 token）：只露出結尾幾碼供辨識已設定哪一條。"""
+    if not url:
+        return ""
+    return "…" + url[-6:]
+
+
+def _card_snapshot(conn, game, card_id):
+    """取卡名與站內卡圖網址（存進通知供清單顯示）。找不到回傳 (None, None)。"""
+    if game == "ygo":
+        r = conn.execute(
+            "SELECT name_tc FROM ygo_cards WHERE id=?", (card_id,)).fetchone()
+        return (r["name_tc"], ygo_img_url(int(card_id))) if r else (None, None)
+    if game == "gcg":
+        r = conn.execute(
+            "SELECT name_tc FROM gundam_cards WHERE id=?", (card_id,)).fetchone()
+        return (r["name_tc"], f"/img/gcg/{card_id}") if r else (None, None)
+    r = conn.execute("SELECT name FROM cards WHERE id=?", (card_id,)).fetchone()
+    return (r["name"], f"/img/pkm/{card_id}") if r else (None, None)
+
+
+@app.get("/api/alerts")
+def api_alerts_list():
+    """通知清單＋Webhook 設定狀態＋背景檢查狀態（前端輪詢用）。"""
+    conn = get_conn()
+    alerts = [dict(r) for r in conn.execute(
+        "SELECT * FROM price_alerts ORDER BY id DESC")]
+    webhook = _get_setting(conn, "discord_webhook", "") or ""
+    conn.close()
+    return jsonify({
+        "alerts": alerts,
+        "webhook_set": bool(webhook),
+        "webhook_hint": _mask_webhook(webhook),
+        "checking": _alert_check["running"],
+    })
+
+
+@app.post("/api/alerts")
+def api_alert_create():
+    """新增到價通知：{game, card_id, target_price, rarity?, lang?, art?}"""
+    p = request.get_json(force=True)
+    game = p.get("game")
+    card_id = str(p.get("card_id") or "").strip()
+    if game not in ("pkm", "ygo", "gcg") or not card_id:
+        return jsonify({"error": "缺少卡片資訊"}), 400
+    try:
+        target = int(p.get("target_price"))
+    except (TypeError, ValueError):
+        return jsonify({"error": "目標價需為數字"}), 400
+    if target <= 0:
+        return jsonify({"error": "目標價需大於 0"}), 400
+    conn = get_conn()
+    name, image = _card_snapshot(conn, game, card_id)
+    if name is None:
+        conn.close()
+        return jsonify({"error": "找不到指定卡片"}), 400
+    conn.execute(
+        "INSERT INTO price_alerts "
+        "(game, card_id, card_name, image_url, rarity, lang, art, target_price) "
+        "VALUES (?,?,?,?,?,?,?,?)",
+        (game, card_id, name, image, p.get("rarity") or None,
+         p.get("lang") or None, p.get("art") or None, target))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/alerts/<int:alert_id>")
+def api_alert_update(alert_id):
+    """更新通知：改目標價 / 暫停啟用 / 重設通知狀態（rearm）。"""
+    p = request.get_json(force=True)
+    conn = get_conn()
+    a = conn.execute(
+        "SELECT id FROM price_alerts WHERE id=?", (alert_id,)).fetchone()
+    if not a:
+        conn.close()
+        return jsonify({"error": "找不到通知"}), 404
+    sets, params = [], []
+    if "target_price" in p:
+        try:
+            sets.append("target_price=?")
+            params.append(int(p["target_price"]))
+            sets.append("notified=0")  # 改目標價後重置，讓新價位能再觸發
+        except (TypeError, ValueError):
+            conn.close()
+            return jsonify({"error": "目標價需為數字"}), 400
+    if p.get("status") in ("active", "paused"):
+        sets.append("status=?")
+        params.append(p["status"])
+    if p.get("rearm"):
+        sets.append("notified=0")
+    if not sets:
+        conn.close()
+        return jsonify({"error": "無可更新欄位"}), 400
+    conn.execute(
+        f"UPDATE price_alerts SET {','.join(sets)} WHERE id=?",
+        params + [alert_id])
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/alerts/<int:alert_id>")
+def api_alert_delete(alert_id):
+    conn = get_conn()
+    conn.execute("DELETE FROM price_alerts WHERE id=?", (alert_id,))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/settings/webhook")
+def api_set_webhook():
+    """設定 / 清除 Discord Webhook 網址。"""
+    p = request.get_json(force=True)
+    url = (p.get("webhook") or "").strip()
+    if url and not DISCORD_WEBHOOK_RE.match(url):
+        return jsonify({"error": "看起來不是有效的 Discord Webhook 網址"}), 400
+    conn = get_conn()
+    _set_setting(conn, "discord_webhook", url)
+    conn.close()
+    return jsonify({"ok": True, "webhook_set": bool(url),
+                    "webhook_hint": _mask_webhook(url)})
+
+
+@app.post("/api/settings/webhook/test")
+def api_test_webhook():
+    """送一則測試訊息到已設定的 Webhook。"""
+    from notify import send_test
+    conn = get_conn()
+    url = _get_setting(conn, "discord_webhook", "") or ""
+    conn.close()
+    if not url:
+        return jsonify({"ok": False, "error": "尚未設定 Webhook"}), 400
+    ok = send_test(url)
+    return jsonify({"ok": ok,
+                    "error": None if ok else "傳送失敗，請確認 Webhook 網址"})
+
+
+@app.post("/api/alerts/check")
+def api_alerts_check():
+    """立即檢查一次（背景執行，避免阻塞；前端輪詢 /api/alerts 的 checking）。"""
+    import threading
+
+    import alerts as alerts_mod
+
+    if _alert_check["running"]:
+        return jsonify({"running": True, "message": "檢查進行中…"})
+
+    def run():
+        _alert_check["running"] = True
+        try:
+            conn = get_conn()
+            res = alerts_mod.check_all(conn)
+            conn.close()
+            _alert_check["fired"] = res["fired"]
+            _alert_check["ts"] = time.time()
+        finally:
+            _alert_check["running"] = False
+
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"running": True, "message": "開始檢查，稍候即可看到結果"})
 
 
 if __name__ == "__main__":

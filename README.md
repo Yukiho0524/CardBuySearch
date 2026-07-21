@@ -21,6 +21,10 @@
    - 能一次湊齊全部卡的賣家（含運費總價）
    - 覆蓋不齊的賣家（標示缺哪幾張）
    - 拆買基準：每張卡取全站最低價、跨賣家運費各計的總價，供對照
+5. **到價通知**：為想要的卡設定目標價，程式定期到露天查詢，
+   當最低價跌破目標時透過**你自己填的 Discord Webhook** 推播通知。
+   在願望清單每張卡按 🔔 設定（沿用該卡已選的稀有度/紙種/版本條件），
+   於「🔔 到價通知」面板管理。Webhook 只存在本機、僅用於推播。
 
 ## 安裝與啟動
 
@@ -73,6 +77,21 @@ python crawler/gundam.py
 ygocdb 全量重匯、譯名字典重學、圖片索引補建、Konami 收錄預抓。
 日誌在 `data/update.log`。移除排程：`schtasks /Delete /TN CardBuySearch-Weekly-Update /F`
 
+### 到價通知（Discord）
+
+在「🔔 到價通知」面板填入你自己的 Discord Webhook 網址
+（Discord 伺服器設定 → 整合 → Webhook → 新增，複製網址），
+再到願望清單每張卡按 🔔 設定目標價即可。網頁上按「🔄 立即檢查一次」可手動觸發；
+要背景自動定期檢查，自行註冊 Windows 排程（電腦需開著）：
+
+```
+schtasks /Create /TN CardBuySearch-Alerts /SC HOURLY /MO 3 ^
+  /TR "\"C:\path\to\python.exe\" \"%CD%\crawler\check_alerts.py\""
+```
+
+達標時會推播到你的 Discord。防重複通知：達標推播一次後，價格回到目標以上才會重置。
+日誌在 `data/alerts.log`。移除排程：`schtasks /Delete /TN CardBuySearch-Alerts /F`
+
 ## 架構
 
 ```
@@ -83,6 +102,9 @@ crawler/pokemon.py  官方繁中卡查爬蟲（兩階段）
 crawler/yugioh.py   遊戲王匯入（ygocdb 匯出檔，OpenCC 簡轉繁）
 crawler/imghash.py  卡圖感知雜湊索引（以圖搜卡用，可斷點續跑）
 ruten.py          露天搜尋 + 商品標題比對（稀有度俗稱字典、日/韓紙判斷、排除套組/同人卡）
+alerts.py         到價通知檢查邏輯（端點與排程共用，重用 ruten 比對）
+notify.py         Discord Webhook 推播（達標通知／測試訊息）
+crawler/check_alerts.py  到價通知排程 CLI（達標則推播，日誌 data/alerts.log）
 static/           前端（純 HTML/JS/CSS，繁中 UI）
 ```
 

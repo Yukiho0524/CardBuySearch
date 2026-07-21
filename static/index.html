@@ -63,6 +63,35 @@
     <div id="compareResults"></div>
   </section>
 
+  <section id="alertSection" class="panel alert-panel">
+    <h2>🔔 到價通知 <span id="alertCount" class="badge">0</span></h2>
+    <p class="import-hint">設定想要的卡與目標價，程式會定期到露天查詢，
+      當最低價跌到目標價以下時透過你的 Discord 通知你。
+      到<b>願望清單</b>每張卡按 🔔 即可設定。</p>
+
+    <div class="webhook-box">
+      <label class="webhook-label" for="webhookInput">Discord Webhook 網址</label>
+      <div class="webhook-row">
+        <input id="webhookInput" type="text" autocomplete="off"
+               placeholder="https://discord.com/api/webhooks/…">
+        <button id="webhookSave">儲存</button>
+        <button id="webhookTest" title="送一則測試訊息到你的 Discord">測試傳送</button>
+      </div>
+      <p class="import-hint">
+        在你的 Discord 伺服器：<b>伺服器設定 → 整合 → Webhook → 新增</b>，複製網址貼上即可。
+        網址只存在本機資料庫、僅用於推播。
+        <a href="https://support.discord.com/hc/zh-tw/articles/228383668" target="_blank" rel="noopener">官方教學</a>
+      </p>
+      <p id="webhookStatus" class="import-hint"></p>
+    </div>
+
+    <div class="alert-toolbar">
+      <button id="alertCheckBtn">🔄 立即檢查一次</button>
+      <span id="alertCheckStatus" class="import-hint"></span>
+    </div>
+    <ul id="alertList" class="alert-list"></ul>
+  </section>
+
   <div id="cardModal" class="modal-backdrop" hidden>
     <div class="modal" role="dialog" aria-modal="true">
       <button class="modal-close" title="關閉">✕</button>
