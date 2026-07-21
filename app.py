@@ -569,7 +569,7 @@ def api_card_detail_gcg(card_id):
         "color": r["color"], "card_type": r["card_type"],
         "level": r["level"], "cost": r["cost"], "ap": r["ap"], "hp": r["hp"],
         "terrain": r["terrain"], "traits": r["traits"], "source": r["source"],
-        "rarity": r["rarity"], "pack": r["pack"],
+        "effect": r["effect"], "rarity": r["rarity"], "pack": r["pack"],
         "image_url": f"/img/gcg/{r['id']}",
         "official_url":
             f"https://www.gundam-gcg.com/zh-tw/cards/detail.php?detailSearch={r['id']}",

@@ -84,6 +84,7 @@ CREATE TABLE IF NOT EXISTS gundam_cards (
     hp        INTEGER,
     terrain   TEXT,               -- 地形
     traits    TEXT,               -- 特徵
+    effect    TEXT,               -- 效果文字
     source    TEXT,               -- 來源作品
     rarity    TEXT,               -- 稀有度 C/U/R/SR/LR...
     pack      TEXT,               -- 系列 GD01/ST01...
@@ -123,6 +124,7 @@ def get_conn():
         ("cards", "card_kind", "TEXT"),   # 寶可夢/物品卡/支援者卡/競技場卡/寶可夢道具/能量卡
         ("cards", "ptype", "TEXT"),       # 寶可夢屬性（草火水雷超鬥惡鋼龍無色）
         ("cards", "hp", "INTEGER"),
+        ("gundam_cards", "effect", "TEXT"),  # 鋼彈效果文字
     ):
         try:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")

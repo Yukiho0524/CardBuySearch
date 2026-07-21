@@ -77,6 +77,8 @@ def parse_detail(html, cid):
     out["terrain"] = fields.get("地形")
     out["traits"] = fields.get("特徵")
     out["source"] = fields.get("來源作品")
+    ov = soup.select_one(".cardDataRow.overview")
+    out["effect"] = ov.get_text(" ", strip=True) if ov else None
     return out
 
 
@@ -94,12 +96,12 @@ def save_image(cid):
         pass
 
 
-def crawl(packs=None, limit=None):
+def crawl(packs=None, limit=None, refill=False):
     conn = get_conn()
     packs = packs or PACKS
-    # 收集所有卡號
+    # 收集所有卡號（refill 模式不需重列，直接補既有卡的空欄位）
     todo = []
-    for pack in packs:
+    for pack in ([] if refill else packs):
         try:
             nums = list_pack(pack)
         except Exception as e:
@@ -112,10 +114,14 @@ def crawl(packs=None, limit=None):
         conn.commit()
         todo += nums
         time.sleep(DELAY)
-    # 只抓未完成的
-    done = {r["id"] for r in conn.execute(
-        "SELECT id FROM gundam_cards WHERE detail_fetched=1")}
-    todo = [n for n in todo if n not in done]
+    if refill:
+        # 補欄位模式：重抓 effect 仍為空的卡（新增欄位後回填）
+        todo = [r["id"] for r in conn.execute(
+            "SELECT id FROM gundam_cards WHERE detail_fetched=1 AND effect IS NULL")]
+    else:
+        done = {r["id"] for r in conn.execute(
+            "SELECT id FROM gundam_cards WHERE detail_fetched=1")}
+        todo = [n for n in todo if n not in done]
     if limit:
         todo = todo[:limit]
     print(f"待抓詳細：{len(todo)} 張")
@@ -131,11 +137,11 @@ def crawl(packs=None, limit=None):
         save_image(cid)
         conn.execute(
             "UPDATE gundam_cards SET name_tc=?, color=?, card_type=?, level=?, "
-            "cost=?, ap=?, hp=?, terrain=?, traits=?, source=?, rarity=?, "
-            "detail_fetched=1 WHERE id=?",
+            "cost=?, ap=?, hp=?, terrain=?, traits=?, effect=?, source=?, "
+            "rarity=?, detail_fetched=1 WHERE id=?",
             (d["name_tc"], d["color"], d["card_type"], d["level"], d["cost"],
-             d["ap"], d["hp"], d["terrain"], d["traits"], d["source"],
-             d["rarity"], cid))
+             d["ap"], d["hp"], d["terrain"], d["traits"], d["effect"],
+             d["source"], d["rarity"], cid))
         conn.commit()
         if i % 20 == 0 or i == len(todo):
             print(f"  {i}/{len(todo)} {d['name_tc']} {cid} [{d['rarity']}]")
@@ -147,5 +153,7 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--pack", help="只爬指定系列（GD01/ST01…）")
     ap.add_argument("--limit", type=int, default=None)
+    ap.add_argument("--refill", action="store_true",
+                    help="補回既有卡的空欄位（如新增 effect 後回填）")
     args = ap.parse_args()
-    crawl([args.pack] if args.pack else None, args.limit)
+    crawl([args.pack] if args.pack else None, args.limit, refill=args.refill)

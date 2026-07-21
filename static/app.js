@@ -332,6 +332,8 @@ function gcgDetailHtml(d) {
     <h2>${esc(d.name)}</h2>
     <p class="modal-sub">${esc(d.id)}　·　鋼彈卡片遊戲</p>
     <div class="badge-row">${chips.join("")}</div>
+    ${d.effect ? `<div class="modal-section"><h4>效果</h4>
+      <div class="card-effect">${esc(d.effect)}</div></div>` : ""}
     <div class="modal-section"><table class="printings-table">${rows}</table></div>
     <div class="modal-actions">
       <button class="add">＋ 加入願望清單</button>
