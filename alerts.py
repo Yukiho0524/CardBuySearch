@@ -52,7 +52,8 @@ def _search(conn, a):
             "SELECT * FROM gundam_cards WHERE id=?", (a["card_id"],)).fetchone()
         if not row:
             return []
-        listings = find_listings_for_gundam(row["name_tc"], row["id"], a["lang"])
+        listings = find_listings_for_gundam(
+            row["name_tc"], row["id"], a["lang"], rarity=row["rarity"])
     else:
         row = conn.execute(
             "SELECT * FROM cards WHERE id=?", (a["card_id"],)).fetchone()

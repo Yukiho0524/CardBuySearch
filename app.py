@@ -842,6 +842,15 @@ def _card_listings(conn, game, card_id, rarity, lang, art):
     compare 一致（寶可夢/遊戲王用數字、鋼彈用字串）才吃得到同一份快取。
     """
     key_id = int(card_id) if game in ("pkm", "ygo") else str(card_id)
+    # 鋼彈稀有度是卡片固有屬性（含異圖 +／++），前端不會傳，改用卡片實際稀有度，
+    # 讓快取鍵與 /api/compare 一致、且異圖過濾生效
+    gcg_row = None
+    if game == "gcg":
+        gcg_row = conn.execute(
+            "SELECT * FROM gundam_cards WHERE id=?", (key_id,)).fetchone()
+        if not gcg_row:
+            return []
+        rarity = gcg_row["rarity"]
     cache_key = (game, key_id, rarity, lang, art)
     cached = _listing_cache.get(cache_key)
     if cached and time.time() - cached[0] < LISTING_CACHE_TTL:
@@ -860,11 +869,8 @@ def _card_listings(conn, game, card_id, rarity, lang, art):
         listings = find_listings_for_ygo(
             [n for n in names if n], rarity, lang, codes=codes, art=art)
     elif game == "gcg":
-        row = conn.execute(
-            "SELECT * FROM gundam_cards WHERE id=?", (key_id,)).fetchone()
-        if not row:
-            return []
-        listings = find_listings_for_gundam(row["name_tc"], row["id"], lang)
+        listings = find_listings_for_gundam(
+            gcg_row["name_tc"], gcg_row["id"], lang, rarity=rarity)
     else:
         row = conn.execute(
             "SELECT * FROM cards WHERE id=?", (key_id,)).fetchone()
@@ -992,7 +998,7 @@ def api_compare():
                     codes=w.get("codes"), art=w.get("art"))
             elif w["game"] == "gcg":
                 listings = find_listings_for_gundam(
-                    w["name"], w["card_id"], w["lang"])
+                    w["name"], w["card_id"], w["lang"], rarity=w["rarity"])
             else:
                 listings = find_listings_for_card(
                     w["name"], w["collector_number"], w["rarity"])

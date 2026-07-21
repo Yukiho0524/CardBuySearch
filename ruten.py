@@ -374,18 +374,60 @@ GUNDAM_LANGS = {
     "美版": ["美版", "英文版", "英版", "美英", "ENGLISH", "EN"],
 }
 
+# 鋼彈異圖平行閃：賣家標題常見寫法（除了稀有度後綴 +／++ 之外的字樣）
+GUNDAM_ART_WORDS = ["異圖", "异图", "パラレル"]
 
-def find_listings_for_gundam(name, card_no, lang=None, limit=40):
+# 稀有度後綴 +／++ 偵測：基礎稀有度字母＋緊跟的一串 +（允許中間空白，如「LR +」）。
+# 只認「字母後面緊跟 +」的寫法——英文單字（Card→C、Rising→R）字母後不是 +，
+# 故不會被誤判成稀有度標記。字母群列長者在前（LR 先於 R）避免 LR 被讀成 R。
+_GUNDAM_PLUS_RE = re.compile(r"(LR|SR|UR|RR|R|U|C|P)\s*(\++)", re.I)
+
+
+def _gundam_rarity_parts(rarity):
+    """稀有度 → (基礎稀有度, 平行閃層級)。
+
+    'LR ++' → ('LR', 2)、'C +' → ('C', 1)、'LR' → ('LR', 0)、'P' → ('P', 0)。
+    """
+    if not rarity:
+        return None, 0
+    r = rarity.replace(" ", "").replace("＋", "+").upper()
+    return r.replace("+", ""), r.count("+")
+
+
+def _gundam_title_art(title):
+    """解析標題的稀有度平行閃標記。回傳 (最大plus層級, 是否標異圖, {(字母, plus數)})。
+
+    tokens 保留「字母＋plus層級」讓比對認得是哪個稀有度的 +（C+ ≠ R+）；
+    最大plus層級供基礎版排除任何平行閃用。
+    """
+    t = title.replace("＋", "+")
+    tokens, maxplus = set(), 0
+    for m in _GUNDAM_PLUS_RE.finditer(t):
+        letter, plus = m.group(1).upper(), len(m.group(2))
+        tokens.add((letter, plus))
+        maxplus = max(maxplus, plus)
+    has_iso = any(w in title for w in GUNDAM_ART_WORDS)
+    return maxplus, has_iso, tokens
+
+
+def find_listings_for_gundam(name, card_no, lang=None, rarity=None, limit=40):
     """鋼彈 GCG：搜露天並比對。
 
     卡號（GD01-001）是最強訊號、賣家幾乎都會標；卡名（鋼彈/高達互通）為輔。
-    版本（日版/美版）在標題比對階段過濾。
+    版本（日版/美版）與**異圖平行閃**在標題比對階段過濾。
 
-    異圖平行卡（GD01-001_p1）：賣家不會標 _pN 後綴，還原成基礎卡號查詢／比對，
-    與基礎卡共用同一批露天商品（露天上異圖標法不一，不再細分）。
+    異圖平行卡（GD01-001_p1）：賣家不標 _pN 後綴，但用稀有度後綴 +／++（如
+    LR+、LR++）或「異圖」字樣區分（露天實證：基礎 LR 約 30–120、LR+ 約 279+、
+    LR++ 上萬）。用卡片稀有度的 + 層級比對標題的 + 層級——基礎版（無 +）排除掉
+    帶 +／異圖 的商品，異圖版只收對應層級。卡號還原成基礎卡號查詢／比對。
+    沒帶 rarity 時不做異圖過濾（維持舊行為）。
     """
     card_no = re.sub(r"_p\d+$", "", card_no)
+    base_r, want_plus = _gundam_rarity_parts(rarity)
     queries = [f"鋼彈 {card_no}", f"鋼彈 {name}"]
+    if want_plus >= 1:
+        # 異圖版加一條精準查詢：價格由低到高排序下，昂貴的異圖常被便宜基礎版擠掉
+        queries.insert(0, f"鋼彈 {card_no} 異圖")
     seen_ids, results = set(), []
     for q in queries:
         try:
@@ -407,8 +449,20 @@ def find_listings_for_gundam(name, card_no, lang=None, limit=40):
                 continue
             if any(w in title for w in EXCLUDE_WORDS):
                 continue
-            # 版本過濾：明標他版排除；未標示或標對版本則保留
+            # 異圖平行閃過濾（用稀有度字母＋ + 層級；沒帶 rarity 就不過濾）
+            title_plus, has_iso, tokens = _gundam_title_art(title)
+            if rarity is not None:
+                if want_plus == 0:
+                    # 基礎版：排除帶任何 +／異圖 的平行閃
+                    if title_plus >= 1 or has_iso:
+                        continue
+                elif (base_r, want_plus) not in tokens:
+                    # 異圖版：標題須有「該稀有度字母＋對應 + 層級」（C+ 不算 R+）
+                    continue
             conf = "strong" if no_hit else "weak"
+            # 異圖版且標題明標「異圖」＋卡號 → 最有把握
+            if want_plus >= 1 and has_iso and no_hit:
+                conf = "strong"
             if lang:
                 aliases = GUNDAM_LANGS.get(lang, [lang])
                 others = [a for lbl, al in GUNDAM_LANGS.items()
