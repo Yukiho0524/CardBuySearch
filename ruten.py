@@ -473,6 +473,24 @@ def resolve_seller(conn, seller_id, sample_prod_id):
             if nick else None)
 
 
+def drop_price_outliers(listings, rel_floor=0.1, min_n=4):
+    """剔除明顯過低的離群價，避免污染「最低價」。
+
+    露天常見雜訊：多規格商品把最便宜規格的價格當商品價（標題對到卡、
+    但那個價其實是同賣場另一張便宜卡）、或 1 元起標。做法：商品數達
+    min_n 時取中位數，剔除低於「中位數 × rel_floor」者——相對門檻會隨
+    卡片價位縮放（便宜卡的便宜商品不會被誤刪），商品太少則不過濾。
+
+    傳入的 listings 應已濾掉無價格者；回傳保留原順序。
+    """
+    prices = sorted(l["price"] for l in listings if l["price"])
+    if len(prices) < min_n:
+        return listings
+    median = prices[len(prices) // 2]
+    floor = median * rel_floor
+    return [l for l in listings if l["price"] >= floor]
+
+
 def _listing_dict(p, confidence):
     price_range = p.get("PriceRange") or [None, None]
     return {

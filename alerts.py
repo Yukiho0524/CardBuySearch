@@ -8,8 +8,8 @@ import datetime
 
 from db import get_conn
 from notify import send_alert
-from ruten import (find_listings_for_card, find_listings_for_gundam,
-                   find_listings_for_ygo)
+from ruten import (drop_price_outliers, find_listings_for_card,
+                   find_listings_for_gundam, find_listings_for_ygo)
 
 # 只採信標題明確對應的商品（strong/weak），排除 maybe——maybe 代表標題
 # 沒標稀有度/紙種，可能是別的版本，拿來觸發通知容易誤報。
@@ -63,6 +63,7 @@ def _search(conn, a):
     listings = [l for l in listings
                 if l["price"] and (l["stock"] or 0) > 0
                 and l["confidence"] in TRIGGER_CONFIDENCES]
+    listings = drop_price_outliers(listings)
     listings.sort(key=lambda l: l["price"])
     return listings
 

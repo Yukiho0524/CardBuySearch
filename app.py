@@ -14,9 +14,10 @@ from flask import Flask, abort, jsonify, request, send_from_directory
 from opencc import OpenCC
 
 from db import get_conn
-from ruten import (GUNDAM_LANGS, YGO_LANGS, YGO_RARITIES, expand_variants,
-                   find_listings_for_card, find_listings_for_gundam,
-                   find_listings_for_ygo, resolve_seller)
+from ruten import (GUNDAM_LANGS, YGO_LANGS, YGO_RARITIES, drop_price_outliers,
+                   expand_variants, find_listings_for_card,
+                   find_listings_for_gundam, find_listings_for_ygo,
+                   resolve_seller)
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 # 本機自用：靜態檔（HTML/JS/CSS）不讓瀏覽器快取，改版即生效，
@@ -872,6 +873,7 @@ def _card_listings(conn, game, card_id, rarity, lang, art):
         listings = find_listings_for_card(
             row["name"], row["collector_number"], rarity)
     listings = [l for l in listings if l["price"] and (l["stock"] or 0) > 0]
+    listings = drop_price_outliers(listings)
     listings.sort(key=lambda l: (CONFIDENCE_ORDER[l["confidence"]], l["price"]))
     _listing_cache[cache_key] = (time.time(), listings)
     return listings
@@ -995,6 +997,7 @@ def api_compare():
                 listings = find_listings_for_card(
                     w["name"], w["collector_number"], w["rarity"])
             listings = [l for l in listings if l["price"] and (l["stock"] or 0) > 0]
+            listings = drop_price_outliers(listings)
             listings.sort(
                 key=lambda l: (CONFIDENCE_ORDER[l["confidence"]], l["price"]))
             _listing_cache[cache_key] = (time.time(), listings)
