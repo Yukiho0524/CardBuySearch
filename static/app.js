@@ -860,6 +860,23 @@ function renderCompare(data) {
 // ---------- 到價通知 ----------
 let alertPoll = null;
 
+// 訪客識別：每個瀏覽器一組隨機 ID（存 localStorage），讓多人各自有獨立的
+// Webhook 與通知清單。免登入、非嚴謹權限；清掉瀏覽器資料等於重置自己那份。
+function clientId() {
+  let id = localStorage.getItem("cbs_client");
+  if (!id) {
+    id = (crypto.randomUUID ? crypto.randomUUID()
+          : Date.now().toString(36) + Math.random().toString(36).slice(2));
+    localStorage.setItem("cbs_client", id);
+  }
+  return id;
+}
+// 到價通知相關請求都帶上訪客 ID
+function alertFetch(url, opts = {}) {
+  opts.headers = Object.assign({}, opts.headers, { "X-Client-Id": clientId() });
+  return fetch(url, opts);
+}
+
 // 從願望清單某張卡建立通知：沿用該卡目前選的稀有度/紙種/版本條件
 async function addAlertFromWish(item, bellBtn) {
   const c = item.card;
@@ -894,7 +911,7 @@ async function addAlertFromWish(item, bellBtn) {
   const target = parseInt(ans.replace(/[^\d]/g, ""), 10);
   if (!target || target <= 0) { alert("請輸入大於 0 的數字"); return; }
   try {
-    const res = await fetch("/api/alerts", {
+    const res = await alertFetch("/api/alerts", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -914,7 +931,7 @@ async function addAlertFromWish(item, bellBtn) {
 async function loadAlerts() {
   let data;
   try {
-    const res = await fetch("/api/alerts");
+    const res = await alertFetch("/api/alerts");
     data = await res.json();
   } catch (e) { return; }
   // Webhook 狀態
@@ -1010,7 +1027,7 @@ async function editAlert(a) {
 
 async function updateAlert(id, body) {
   try {
-    const res = await fetch(`/api/alerts/${id}`, {
+    const res = await alertFetch(`/api/alerts/${id}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -1022,7 +1039,7 @@ async function updateAlert(id, body) {
 }
 
 async function deleteAlert(id) {
-  await fetch(`/api/alerts/${id}`, { method: "DELETE" });
+  await alertFetch(`/api/alerts/${id}`, { method: "DELETE" });
   loadAlerts();
 }
 
@@ -1030,7 +1047,7 @@ $("#webhookSave").addEventListener("click", async () => {
   const url = $("#webhookInput").value.trim();
   $("#webhookStatus").textContent = "儲存中…";
   try {
-    const res = await fetch("/api/settings/webhook", {
+    const res = await alertFetch("/api/settings/webhook", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ webhook: url }),
@@ -1045,7 +1062,7 @@ $("#webhookSave").addEventListener("click", async () => {
 $("#webhookTest").addEventListener("click", async () => {
   $("#webhookStatus").textContent = "傳送測試訊息中…";
   try {
-    const res = await fetch("/api/settings/webhook/test", { method: "POST" });
+    const res = await alertFetch("/api/settings/webhook/test", { method: "POST" });
     const data = await res.json();
     $("#webhookStatus").textContent = data.ok
       ? "✅ 測試訊息已送出，請到 Discord 查看。"
@@ -1057,7 +1074,7 @@ $("#alertCheckBtn").addEventListener("click", async () => {
   $("#alertCheckStatus").innerHTML = '<span class="spinner"></span>開始檢查…';
   $("#alertCheckBtn").disabled = true;
   try {
-    await fetch("/api/alerts/check", { method: "POST" });
+    await alertFetch("/api/alerts/check", { method: "POST" });
     loadAlerts();  // 進入輪詢模式
   } catch (err) {
     $("#alertCheckStatus").textContent = "檢查失敗：" + err.message;

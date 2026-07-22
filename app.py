@@ -1190,6 +1190,18 @@ def _mask_webhook(url):
     return "…" + url[-6:]
 
 
+def _client_id():
+    """訪客識別：前端每個瀏覽器產一組隨機 ID，以 X-Client-Id 標頭帶上。
+
+    多人連同一站時，各自的 Webhook 與通知清單靠此區隔（免登入、非嚴謹權限）。
+    """
+    return (request.headers.get("X-Client-Id") or "").strip()
+
+
+def _webhook_key(client_id):
+    return f"webhook:{client_id}"
+
+
 def _card_snapshot(conn, game, card_id):
     """取卡名與站內卡圖網址（存進通知供清單顯示）。找不到回傳 (None, None)。"""
     if game == "ygo":
@@ -1206,11 +1218,15 @@ def _card_snapshot(conn, game, card_id):
 
 @app.get("/api/alerts")
 def api_alerts_list():
-    """通知清單＋Webhook 設定狀態＋背景檢查狀態（前端輪詢用）。"""
+    """該訪客的通知清單＋自己的 Webhook 狀態＋背景檢查狀態（前端輪詢用）。"""
+    cid = _client_id()
+    if not cid:
+        return jsonify({"alerts": [], "webhook_set": False, "webhook_hint": "",
+                        "checking": _alert_check["running"]})
     conn = get_conn()
     alerts = [dict(r) for r in conn.execute(
-        "SELECT * FROM price_alerts ORDER BY id DESC")]
-    webhook = _get_setting(conn, "discord_webhook", "") or ""
+        "SELECT * FROM price_alerts WHERE client_id=? ORDER BY id DESC", (cid,))]
+    webhook = _get_setting(conn, _webhook_key(cid), "") or ""
     conn.close()
     return jsonify({
         "alerts": alerts,
@@ -1223,6 +1239,9 @@ def api_alerts_list():
 @app.post("/api/alerts")
 def api_alert_create():
     """新增到價通知：{game, card_id, target_price, rarity?, lang?, art?}"""
+    cid = _client_id()
+    if not cid:
+        return jsonify({"error": "缺少訪客識別"}), 400
     p = request.get_json(force=True)
     game = p.get("game")
     card_id = str(p.get("card_id") or "").strip()
@@ -1241,9 +1260,9 @@ def api_alert_create():
         return jsonify({"error": "找不到指定卡片"}), 400
     conn.execute(
         "INSERT INTO price_alerts "
-        "(game, card_id, card_name, image_url, rarity, lang, art, target_price) "
-        "VALUES (?,?,?,?,?,?,?,?)",
-        (game, card_id, name, image, p.get("rarity") or None,
+        "(client_id, game, card_id, card_name, image_url, rarity, lang, art, "
+        "target_price) VALUES (?,?,?,?,?,?,?,?,?)",
+        (cid, game, card_id, name, image, p.get("rarity") or None,
          p.get("lang") or None, p.get("art") or None, target))
     conn.commit()
     conn.close()
@@ -1252,11 +1271,13 @@ def api_alert_create():
 
 @app.post("/api/alerts/<int:alert_id>")
 def api_alert_update(alert_id):
-    """更新通知：改目標價 / 暫停啟用 / 重設通知狀態（rearm）。"""
+    """更新通知：改目標價 / 暫停啟用 / 重設通知狀態（rearm）。僅限本人的通知。"""
+    cid = _client_id()
     p = request.get_json(force=True)
     conn = get_conn()
     a = conn.execute(
-        "SELECT id FROM price_alerts WHERE id=?", (alert_id,)).fetchone()
+        "SELECT id FROM price_alerts WHERE id=? AND client_id=?",
+        (alert_id, cid)).fetchone()
     if not a:
         conn.close()
         return jsonify({"error": "找不到通知"}), 404
@@ -1278,8 +1299,8 @@ def api_alert_update(alert_id):
         conn.close()
         return jsonify({"error": "無可更新欄位"}), 400
     conn.execute(
-        f"UPDATE price_alerts SET {','.join(sets)} WHERE id=?",
-        params + [alert_id])
+        f"UPDATE price_alerts SET {','.join(sets)} WHERE id=? AND client_id=?",
+        params + [alert_id, cid])
     conn.commit()
     conn.close()
     return jsonify({"ok": True})
@@ -1287,8 +1308,10 @@ def api_alert_update(alert_id):
 
 @app.delete("/api/alerts/<int:alert_id>")
 def api_alert_delete(alert_id):
+    cid = _client_id()
     conn = get_conn()
-    conn.execute("DELETE FROM price_alerts WHERE id=?", (alert_id,))
+    conn.execute(
+        "DELETE FROM price_alerts WHERE id=? AND client_id=?", (alert_id, cid))
     conn.commit()
     conn.close()
     return jsonify({"ok": True})
@@ -1296,13 +1319,16 @@ def api_alert_delete(alert_id):
 
 @app.post("/api/settings/webhook")
 def api_set_webhook():
-    """設定 / 清除 Discord Webhook 網址。"""
+    """設定 / 清除該訪客自己的 Discord Webhook 網址。"""
+    cid = _client_id()
+    if not cid:
+        return jsonify({"error": "缺少訪客識別"}), 400
     p = request.get_json(force=True)
     url = (p.get("webhook") or "").strip()
     if url and not DISCORD_WEBHOOK_RE.match(url):
         return jsonify({"error": "看起來不是有效的 Discord Webhook 網址"}), 400
     conn = get_conn()
-    _set_setting(conn, "discord_webhook", url)
+    _set_setting(conn, _webhook_key(cid), url)
     conn.close()
     return jsonify({"ok": True, "webhook_set": bool(url),
                     "webhook_hint": _mask_webhook(url)})
@@ -1310,10 +1336,11 @@ def api_set_webhook():
 
 @app.post("/api/settings/webhook/test")
 def api_test_webhook():
-    """送一則測試訊息到已設定的 Webhook。"""
+    """送一則測試訊息到該訪客自己的 Webhook。"""
     from notify import send_test
+    cid = _client_id()
     conn = get_conn()
-    url = _get_setting(conn, "discord_webhook", "") or ""
+    url = _get_setting(conn, _webhook_key(cid), "") or "" if cid else ""
     conn.close()
     if not url:
         return jsonify({"ok": False, "error": "尚未設定 Webhook"}), 400
@@ -1324,11 +1351,14 @@ def api_test_webhook():
 
 @app.post("/api/alerts/check")
 def api_alerts_check():
-    """立即檢查一次（背景執行，避免阻塞；前端輪詢 /api/alerts 的 checking）。"""
+    """立即檢查該訪客的通知（背景執行；前端輪詢 /api/alerts 的 checking）。"""
     import threading
 
     import alerts as alerts_mod
 
+    cid = _client_id()
+    if not cid:
+        return jsonify({"error": "缺少訪客識別"}), 400
     if _alert_check["running"]:
         return jsonify({"running": True, "message": "檢查進行中…"})
 
@@ -1336,7 +1366,7 @@ def api_alerts_check():
         _alert_check["running"] = True
         try:
             conn = get_conn()
-            res = alerts_mod.check_all(conn)
+            res = alerts_mod.check_all(conn, client_id=cid)
             conn.close()
             _alert_check["fired"] = res["fired"]
             _alert_check["ts"] = time.time()

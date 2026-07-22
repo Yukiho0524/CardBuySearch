@@ -114,6 +114,7 @@ CREATE TABLE IF NOT EXISTS app_settings (
 -- card_id 存為 TEXT 以相容鋼彈的字串卡號（如 GD01-001）。
 CREATE TABLE IF NOT EXISTS price_alerts (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id    TEXT,                   -- 訪客識別（瀏覽器隨機 ID，多人各自清單用）
     game         TEXT NOT NULL,          -- pkm / ygo / gcg
     card_id      TEXT NOT NULL,
     card_name    TEXT,                   -- 顯示用快照
@@ -154,6 +155,7 @@ def get_conn():
         ("cards", "ptype", "TEXT"),       # 寶可夢屬性（草火水雷超鬥惡鋼龍無色）
         ("cards", "hp", "INTEGER"),
         ("gundam_cards", "effect", "TEXT"),  # 鋼彈效果文字
+        ("price_alerts", "client_id", "TEXT"),  # 舊庫補：訪客識別
     ):
         try:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")

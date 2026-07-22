@@ -173,6 +173,7 @@ python crawler/imghash.py --game ygo|pkm   # 以圖搜卡索引
 4. **Webhook 只收 Discord 官方網址**（`DISCORD_WEBHOOK_RE` 驗證），回傳前端時遮罩（只露結尾 6 碼），避免 token 外流。
 5. **順便累積歷史價**：每次檢查把最低價寫進 `price_history`，與比價共用同一張表，即使沒開網頁比價也會累積走勢。
 6. **card_id 存 TEXT**：相容鋼彈字串卡號（`GD01-001`）；寶可夢/遊戲王的數字 id 以字串存，查詢靠 SQLite 型別親和自動轉換。
+7. **多人各自的清單（2026-07-21）**：同內網多人連同一站時，各自有獨立的 Webhook 與通知清單。做法**輕量、免登入**：前端每個瀏覽器產一組隨機 `client_id`（存 localStorage，`clientId()`），到價相關請求都以 **`X-Client-Id` 標頭**帶上（`alertFetch()`）。後端 `price_alerts` 加 `client_id` 欄位、Webhook 存 `app_settings` 的 `webhook:<client_id>` 鍵；所有端點按 `client_id` 過濾＋驗證擁有者（改/刪別人的通知回 404）。背景檢查 `check_all(client_id=None)` 跑**全部人**、每筆用**該通知主人的 Webhook**（`get_webhook(conn, client_id)`，逐 client 快取）；網頁「立即檢查」只查**自己**的（`check_all(client_id=cid)`）。⚠️ **非嚴謹權限**：靠瀏覽器隨機 ID 認人，清掉瀏覽器資料＝重置自己那份；且各訪客的 Webhook 存在主機 DB（主機端看得到）。適用朋友群內網自用，不是對外多租戶。舊資料若有 `client_id=NULL` 的通知（前一版單人時建的）不屬於任何 client、UI 不顯示，排程仍會查但無 webhook 不推播。
 
 **排程（選用，要背景自動跑才需要）**——比照週更新那套，自行註冊 Windows 排程（電腦要開著）：
 ```

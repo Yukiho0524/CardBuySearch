@@ -20,9 +20,13 @@ def _now():
     return datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
 
-def get_webhook(conn):
+def get_webhook(conn, client_id):
+    """該訪客的 Discord Webhook（存 app_settings，鍵為 webhook:<client_id>）。"""
+    if not client_id:
+        return ""
     row = conn.execute(
-        "SELECT value FROM app_settings WHERE key='discord_webhook'").fetchone()
+        "SELECT value FROM app_settings WHERE key=?",
+        (f"webhook:{client_id}",)).fetchone()
     return (row["value"] if row else "") or ""
 
 
@@ -114,15 +118,26 @@ def check_alert(conn, a, webhook):
     return {"id": a["id"], "min_price": min_price, "hit": hit, "fired": fired}
 
 
-def check_all(conn, verbose=False):
-    """檢查所有啟用中的通知。回傳 {checked, fired, results}。"""
-    webhook = get_webhook(conn)
-    alerts = [dict(r) for r in conn.execute(
-        "SELECT * FROM price_alerts WHERE status='active' ORDER BY id")]
+def check_all(conn, client_id=None, verbose=False):
+    """檢查啟用中的通知（給 client_id 只查該訪客的，否則全部）。
+
+    每筆用「該通知主人的 Webhook」推播；回傳 {checked, fired, results}。
+    """
+    if client_id:
+        alerts = [dict(r) for r in conn.execute(
+            "SELECT * FROM price_alerts WHERE status='active' AND client_id=? "
+            "ORDER BY id", (client_id,))]
+    else:
+        alerts = [dict(r) for r in conn.execute(
+            "SELECT * FROM price_alerts WHERE status='active' ORDER BY id")]
+    webhooks = {}  # client_id -> webhook（快取，避免每筆重查）
     results = []
     for a in alerts:
+        cid = a.get("client_id")
+        if cid not in webhooks:
+            webhooks[cid] = get_webhook(conn, cid)
         try:
-            res = check_alert(conn, a, webhook)
+            res = check_alert(conn, a, webhooks[cid])
         except Exception as e:  # 單筆失敗不影響其他
             res = {"id": a["id"], "error": str(e)}
         if verbose:
