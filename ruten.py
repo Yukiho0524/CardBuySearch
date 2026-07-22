@@ -127,7 +127,12 @@ def _squash(s):
 
 
 def search_products(query, limit=40):
-    """搜露天，回傳商品詳情 list。"""
+    """搜露天，回傳商品詳情 list（只留台幣計價，濾掉海外美金商品）。
+
+    露天會混入海外賣場的商品，其 `Currency` 為 USD、`PriceRange` 是美金數字。
+    這些若當台幣顯示會變成離譜低價（如 US$2.53 顯示成 NT$2.53），且台灣買家
+    也不會跨境買，故一律濾除。缺 Currency 欄位時保守保留（避免 API 變動誤刪）。
+    """
     r = session.get(SEARCH_URL, params={
         "q": query, "type": "direct", "sort": "prc/ac",  # 價格由低到高
         "offset": 1, "limit": limit,
@@ -146,7 +151,7 @@ def search_products(query, limit=40):
         r2.raise_for_status()
         details += r2.json()
         time.sleep(DELAY)
-    return details
+    return [d for d in details if d.get("Currency") in (None, "TWD")]
 
 
 def _norm(s):
