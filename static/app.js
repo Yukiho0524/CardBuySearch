@@ -4,7 +4,9 @@ const wishlist = new Map(); // key "game:id" -> {card, qty, rarity, lang}
 let ygoOptions = { rarities: [], langs: [] };
 let gcgOptions = { langs: [] };
 
-const GAME_LABEL = { pkm: "寶可夢", ygo: "遊戲王", gcg: "鋼彈" };
+const GAME_LABEL = { pkm: "寶可夢", ygo: "遊戲王", gcg: "鋼彈", ga: "GA" };
+// GA（Grand Archive）普卡/閃卡（用願望清單的 lang 欄位承載）
+const GA_FOILS = ["普卡", "閃卡"];
 
 function currentGame() {
   return document.querySelector('input[name="game"]:checked').value;
@@ -56,6 +58,7 @@ document.querySelectorAll('input[name="game"]').forEach((el) =>
       ygo: "卡名（例：灰流麗、増殖するG，中日文皆可）",
       gcg: "卡名或卡號（例：高達、GD01-001）",
       pkm: "卡名或編號（例：噴火龍、094/081）",
+      ga: "英文卡名或卡號（例：Volnia、RDO-204）",
     }[game];
     $("#searchInput").value = "";
     startBrowse();  // 切換遊戲直接進入該遊戲的全卡一覽
@@ -126,6 +129,14 @@ function renderFilterBar() {
       filterSelect("lv", "等級", opts.levels, cur.lv) +
       filterSelect("source", "作品", opts.sources, cur.source) +
       filterSelect("pack", "產品", opts.products, cur.pack) +
+      filterSelect("rarity", "稀有度", opts.rarities, cur.rarity) +
+      '<button class="clear-filters">清除條件</button>';
+  } else if (game === "ga") {
+    bar.innerHTML =
+      filterSelect("element", "元素", opts.elements, cur.element) +
+      filterSelect("class", "職業", opts.classes, cur.class) +
+      filterSelect("type", "卡種", opts.types, cur.type) +
+      filterSelect("set", "系列", opts.sets, cur.set) +
       filterSelect("rarity", "稀有度", opts.rarities, cur.rarity) +
       '<button class="clear-filters">清除條件</button>';
   } else {
@@ -249,6 +260,7 @@ function cardEl(c) {
   const inList = wishlist.has(keyOf(c));
   const sub = c.game === "ygo" ? `${c.name_jp || ""}`
     : c.game === "gcg" ? `${c.collector_number || ""} ${c.color || ""}`
+    : c.game === "ga" ? `${c.collector_number || ""} ${c.element || ""}`
     : `${c.set_alpha || ""} ${c.collector_number || ""}`;
   div.innerHTML = `
     <div class="card-click" title="查看卡片詳情">
@@ -312,7 +324,8 @@ async function openCardModal(game, cardId) {
   }
   $("#modalImg").src = d.image_url;
   $("#modalInfo").innerHTML = d.game === "ygo" ? ygoDetailHtml(d)
-    : d.game === "gcg" ? gcgDetailHtml(d) : pkmDetailHtml(d);
+    : d.game === "gcg" ? gcgDetailHtml(d)
+    : d.game === "ga" ? gaDetailHtml(d) : pkmDetailHtml(d);
   bindModalActions(d);
 }
 
@@ -345,6 +358,46 @@ function gcgDetailHtml(d) {
     <div class="modal-section"><table class="printings-table">${rows}</table></div>
     ${(d.variants || []).length > 1 ? `<div class="modal-section">
       <h4>異圖版本（${d.variants.length}）——挑你要收的版本</h4>
+      <ul class="variant-list" style="max-height:200px;overflow-y:auto">${variants}</ul></div>` : ""}
+    <div class="modal-actions">
+      <button class="add">＋ 加入願望清單</button>
+      <a class="official" href="${esc(d.official_url)}" target="_blank" rel="noopener">官方卡表</a>
+    </div>`;
+}
+
+function gaDetailHtml(d) {
+  const chips = [];
+  const push = (v) => v && chips.push(`<span class="badge-chip">${esc(String(v))}</span>`);
+  push(d.element);
+  (d.classes || "").split(",").filter(Boolean).forEach(push);
+  (d.types || "").split(",").filter(Boolean).forEach(push);
+  if (d.level != null) chips.push(`<span class="badge-chip stat">Lv ${d.level}</span>`);
+  if (d.cost_memory != null || d.cost_reserve != null)
+    chips.push(`<span class="badge-chip">費 ${d.cost_memory ?? "-"}${d.cost_reserve != null ? "/" + d.cost_reserve : ""}</span>`);
+  if (d.power != null || d.life != null)
+    chips.push(`<span class="badge-chip stat">攻 ${d.power ?? "-"}／命 ${d.life ?? "-"}</span>`);
+  if (d.durability != null) chips.push(`<span class="badge-chip stat">耐 ${d.durability}</span>`);
+  const rows = [["卡號", `${d.set_prefix}-${d.collector_number}`], ["系列", d.set_name],
+    ["稀有度", d.rarity], ["特徵", d.subtypes]]
+    .filter(([, v]) => v)
+    .map(([k, v]) => `<tr><th>${k}</th><td>${esc(String(v))}</td></tr>`).join("");
+  const variants = (d.variants || []).map((v) => `
+    <li class="${v.id === d.id ? "current" : ""}">
+      <a href="#" data-vid="${esc(v.id)}" data-vgame="ga">
+        <span>${esc(v.set_prefix)}-${esc(v.collector_number)}</span>
+        ${v.rarity ? `<span class="rarity-tag">${esc(v.rarity)}</span>` : ""}
+        ${v.id === d.id ? "<span>← 目前</span>" : ""}
+      </a>
+    </li>`).join("");
+  return `
+    <h2>${esc(d.name)}</h2>
+    <p class="modal-sub">${esc(d.set_prefix)}-${esc(d.collector_number)}　·　Grand Archive TCG</p>
+    <div class="badge-row">${chips.join("")}</div>
+    ${d.effect ? `<div class="modal-section"><h4>效果</h4>
+      <div class="card-effect">${esc(d.effect)}</div></div>` : ""}
+    <div class="modal-section"><table class="printings-table">${rows}</table></div>
+    ${(d.variants || []).length > 1 ? `<div class="modal-section">
+      <h4>其他版本（${d.variants.length}）——挑你要收的版本</h4>
       <ul class="variant-list" style="max-height:200px;overflow-y:auto">${variants}</ul></div>` : ""}
     <div class="modal-actions">
       <button class="add">＋ 加入願望清單</button>
@@ -432,6 +485,10 @@ function bindModalActions(d) {
     : d.game === "gcg"
     ? { id: d.id, game: "gcg", name: d.name, collector_number: d.id,
         rarity: d.rarity, color: d.color, image_url: d.image_url }
+    : d.game === "ga"
+    ? { id: d.id, game: "ga", name: d.name,
+        collector_number: `${d.set_prefix}-${d.collector_number}`,
+        rarity: d.rarity, element: d.element, image_url: d.image_url }
     : { id: d.id, game: "pkm", name: d.name, set_alpha: d.set_alpha,
         collector_number: d.collector_number, rarity: d.rarity,
         image_url: d.image_url };
@@ -451,7 +508,7 @@ function bindModalActions(d) {
     a.addEventListener("click", (e) => {
       e.preventDefault();
       const g = a.dataset.vgame || "pkm";
-      openCardModal(g, g === "gcg" ? a.dataset.vid : parseInt(a.dataset.vid));
+      openCardModal(g, (g === "gcg" || g === "ga") ? a.dataset.vid : parseInt(a.dataset.vid));
     }));
 }
 
@@ -601,6 +658,12 @@ function renderWishlist() {
       // 鋼彈：僅版本（日版/美版），稀有度是卡片本身固定屬性不需選
       const lOpts = ['<option value="">版本不限</option>',
         ...gcgOptions.langs.map((l) =>
+          `<option value="${l}" ${item.lang === l ? "selected" : ""}>${l}</option>`)];
+      optsHtml = `<div class="opts"><select class="opt lang">${lOpts.join("")}</select></div>`;
+    } else if (c.game === "ga") {
+      // GA：普卡/閃卡（價差大）。稀有度是版本固有屬性不需選；用 lang 欄位承載
+      const lOpts = ['<option value="">普/閃不限</option>',
+        ...GA_FOILS.map((l) =>
           `<option value="${l}" ${item.lang === l ? "selected" : ""}>${l}</option>`)];
       optsHtml = `<div class="opts"><select class="opt lang">${lOpts.join("")}</select></div>`;
     }

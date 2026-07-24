@@ -484,6 +484,91 @@ def find_listings_for_gundam(name, card_no, lang=None, rarity=None, limit=40):
     return results
 
 
+# Grand Archive（GA）：全英文卡，台灣賣美版。露天賣家標法（實證）：
+#   「Grand Archive / GA」＋英文卡名＋系列代碼＋卡號（＋稀有度、普卡/閃卡）
+#   例：「【牌拍】GA Grand Archive Volnia RDO • EN–204 • C」
+# 卡名常是通用英文詞（Wind Cutter、Volnia），故一律要求標題有 GA/Grand Archive
+# 關鍵字排除跨遊戲誤中（如遊戲王的「Ga P.U.N.K.」）。長名標題常被截斷，
+# 靠「系列＋卡號」定位版本；閃卡與普卡價差大（普卡 5、閃卡 180），另做過濾。
+GA_KEYWORDS = ["GRANDARCHIVE", "GATCG"]
+GA_FOIL_WORDS = ["閃卡", "閃箔", "FOIL"]
+GA_NONFOIL_WORDS = ["普卡", "普通卡", "一般卡"]
+
+
+def _squash_ga(s):
+    """GA 卡名正規化：全形轉半形、大寫、去空白與標點（逗號/撇號/句點/連字號）。"""
+    return re.sub(r"[\s,.'’\-–·・]", "", _norm(s))
+
+
+def find_listings_for_ga(name, set_prefix, collector_number, rarity=None,
+                         foil=None, limit=40):
+    """Grand Archive：搜露天並比對（英文名＋系列＋卡號）。
+
+    比對訊號：GA 關鍵字（必要，排除跨遊戲）＋卡名＋「系列＋卡號」定位版本。
+    信心：系列＋卡號都中＝確定版本→strong；只中卡名→weak（版本未定）。
+    foil＝「閃卡」只收明標閃箔者；「普卡」收明標普卡＋未標示者；None 不過濾。
+    """
+    name_sq = _squash_ga(name)
+    head = re.split(r"[,，]", name)[0]  # 逗號前的主名（Lorraine, … → Lorraine）
+    head_sq = _squash_ga(head)
+    num = (collector_number or "").lstrip("0") or (collector_number or "")
+    set_up = (set_prefix or "").upper()
+
+    queries = [f"Grand Archive {head}"]
+    if set_prefix and collector_number:
+        queries.append(f"Grand Archive {set_prefix} {collector_number}")
+    queries = list(dict.fromkeys(queries))
+
+    seen_ids, results = set(), []
+    for q in queries:
+        try:
+            products = search_products(q, limit=limit)
+        except Exception:
+            continue
+        for p in products:
+            if p["ProdId"] in seen_ids:
+                continue
+            seen_ids.add(p["ProdId"])
+            title = p.get("ProdName", "")
+            tn = _norm(title)
+            tsq = _squash_ga(title)
+            if not any(k in tsq for k in GA_KEYWORDS):
+                continue  # 沒有 GA/Grand Archive 關鍵字 → 跳過（排除跨遊戲）
+            if any(w in title for w in EXCLUDE_WORDS):
+                continue
+            name_hit = name_sq in tsq
+            # 系列＋卡號都出現＝定位到這個版本（卡號用 token 邊界避免誤中）
+            num_hit = bool(num) and re.search(rf"(?<!\d){re.escape(num)}(?!\d)", tn)
+            set_hit = bool(set_up) and set_up in tn
+            edition_hit = bool(num_hit and set_hit)
+            head_hit = bool(head_sq) and head_sq in tsq
+            if not (name_hit or edition_hit or (head_hit and num_hit)):
+                continue
+
+            # 普卡/閃卡過濾
+            is_foil = any(w in title for w in GA_FOIL_WORDS)
+            is_nonfoil = any(w in title for w in GA_NONFOIL_WORDS)
+            if foil == "閃卡":
+                if not is_foil:
+                    continue
+            elif foil == "普卡":
+                if is_foil and not is_nonfoil:
+                    continue  # 明標閃卡→排除；未標示視為普卡保留
+
+            if edition_hit:
+                conf = "strong"
+            elif name_hit and num_hit:
+                conf = "strong"
+            elif name_hit:
+                conf = "weak"
+            else:
+                conf = "weak"
+            results.append(_listing_dict(p, conf))
+        if len(results) >= 25:
+            break
+    return results
+
+
 NICK_RE = re.compile(r'"nick":"([^"]+)"')
 BOARD_NAME_RE = re.compile(r'"boardName":"([^"]*)"')
 CREDIT_RATE_RE = re.compile(r'"creditRate":([\d.]+)')

@@ -9,7 +9,8 @@ import datetime
 from db import get_conn
 from notify import send_alert
 from ruten import (drop_price_outliers, find_listings_for_card,
-                   find_listings_for_gundam, find_listings_for_ygo)
+                   find_listings_for_ga, find_listings_for_gundam,
+                   find_listings_for_ygo)
 
 # 只採信標題明確對應的商品（strong/weak），排除 maybe——maybe 代表標題
 # 沒標稀有度/紙種，可能是別的版本，拿來觸發通知容易誤報。
@@ -58,6 +59,14 @@ def _search(conn, a):
             return []
         listings = find_listings_for_gundam(
             row["name_tc"], row["id"], a["lang"], rarity=row["rarity"])
+    elif game == "ga":
+        row = conn.execute(
+            "SELECT * FROM ga_cards WHERE id=?", (a["card_id"],)).fetchone()
+        if not row:
+            return []
+        listings = find_listings_for_ga(
+            row["name"], row["set_prefix"], row["collector_number"],
+            rarity=row["rarity_label"], foil=a["lang"])
     else:
         row = conn.execute(
             "SELECT * FROM cards WHERE id=?", (a["card_id"],)).fetchone()

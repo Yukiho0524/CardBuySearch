@@ -16,8 +16,8 @@ from opencc import OpenCC
 from db import get_conn
 from ruten import (GUNDAM_LANGS, YGO_LANGS, YGO_RARITIES, drop_price_outliers,
                    expand_variants, find_listings_for_card,
-                   find_listings_for_gundam, find_listings_for_ygo,
-                   resolve_seller)
+                   find_listings_for_ga, find_listings_for_gundam,
+                   find_listings_for_ygo, resolve_seller)
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 # 本機自用：靜態檔（HTML/JS/CSS）不讓瀏覽器快取，改版即生效，
@@ -218,6 +218,17 @@ def gcg_card_dict(r):
     }
 
 
+def ga_card_dict(r):
+    """Grand Archive 卡列統一格式（全英文，卡號＝系列-編號）。"""
+    return {
+        "id": r["id"], "game": "ga", "name": r["name"],
+        "collector_number": f"{r['set_prefix']}-{r['collector_number']}",
+        "rarity": r["rarity_label"], "element": r["element"],
+        "card_type": r["types"], "set_prefix": r["set_prefix"],
+        "image_url": f"/img/ga/{r['image']}",
+    }
+
+
 @app.get("/api/search")
 def api_search():
     """卡片搜尋：game＝pkm/ygo，q＝卡名或編號，rarity＝稀有度過濾（僅寶可夢）。"""
@@ -235,6 +246,13 @@ def api_search():
             "AND (name_tc LIKE ? OR id LIKE ?) ORDER BY id LIMIT 60",
             (f"%{q}%", f"%{q}%")).fetchall()
         cards = [gcg_card_dict(r) for r in rows]
+    elif game == "ga":
+        rows = conn.execute(
+            "SELECT * FROM ga_cards WHERE name LIKE ? "
+            "OR (set_prefix || '-' || collector_number) LIKE ? "
+            "ORDER BY name, set_prefix, collector_number LIMIT 60",
+            (f"%{q}%", f"%{q}%")).fetchall()
+        cards = [ga_card_dict(r) for r in rows]
     else:
         sql = "SELECT * FROM cards WHERE detail_fetched=1"
         params = []
@@ -350,6 +368,29 @@ def api_browse_options():
                          for p in distinct("pack")],
             "rarities": distinct("rarity"),
         }
+    elif game == "ga":
+        def ga_tokens(col):
+            """從逗號分隔欄位取出所有單一標記（如 element='EXALTED,FIRE'）。"""
+            seen = set()
+            for r in conn.execute(
+                    f"SELECT {col} FROM ga_cards WHERE {col} IS NOT NULL"):
+                for tok in (r[0] or "").split(","):
+                    if tok:
+                        seen.add(tok)
+            return sorted(seen)
+        out = {
+            "elements": ga_tokens("element"),
+            "classes": ga_tokens("classes"),
+            "types": ga_tokens("types"),
+            "sets": [{"value": r["set_prefix"],
+                      "label": f"{r['set_prefix']}　{r['set_name'] or ''}".strip()}
+                     for r in conn.execute(
+                         "SELECT set_prefix, MAX(set_name) AS set_name FROM ga_cards "
+                         "GROUP BY set_prefix ORDER BY set_prefix")],
+            "rarities": [r[0] for r in conn.execute(
+                "SELECT rarity_label FROM ga_cards WHERE rarity_label IS NOT NULL "
+                "GROUP BY rarity_label ORDER BY MIN(rarity)")],
+        }
     else:
         out = {
             "kinds": ["寶可夢", "物品卡", "支援者卡", "競技場卡",
@@ -439,6 +480,27 @@ def api_browse():
             f"SELECT * FROM gundam_cards {where} ORDER BY id LIMIT 60 OFFSET ?",
             params + [offset]).fetchall()
         cards = [gcg_card_dict(r) for r in rows]
+    elif game == "ga":
+        conds, params = [], []
+        for key, col in (("element", "element"), ("class", "classes"),
+                         ("type", "types")):
+            val = request.args.get(key)
+            if val:  # 逗號分隔欄位：以整個 token 比對（避免子字串誤中）
+                conds.append(f"(','||{col}||',') LIKE ?")
+                params.append(f"%,{val},%")
+        for key, col in (("set", "set_prefix"), ("rarity", "rarity_label")):
+            val = request.args.get(key)
+            if val:
+                conds.append(f"{col} = ?")
+                params.append(val)
+        where = ("WHERE " + " AND ".join(conds)) if conds else ""
+        total = conn.execute(
+            f"SELECT COUNT(*) FROM ga_cards {where}", params).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT * FROM ga_cards {where} "
+            f"ORDER BY set_prefix, collector_number LIMIT 60 OFFSET ?",
+            params + [offset]).fetchall()
+        cards = [ga_card_dict(r) for r in rows]
     else:
         conds, params = ["detail_fetched=1"], []
         kind = request.args.get("kind")  # 大類：寶可夢/物品卡/支援者卡/...
@@ -615,6 +677,37 @@ def api_card_detail_gcg(card_id):
     })
 
 
+@app.get("/api/card/ga/<card_id>")
+def api_card_detail_ga(card_id):
+    """Grand Archive 卡片詳情：元素/職業/卡種/費用/攻防/效果＋同卡其他版本。"""
+    conn = get_conn()
+    r = conn.execute("SELECT * FROM ga_cards WHERE id=?", (card_id,)).fetchone()
+    if not r:
+        conn.close()
+        abort(404)
+    variants = [{"id": v["id"], "set_prefix": v["set_prefix"],
+                 "collector_number": v["collector_number"],
+                 "rarity": v["rarity_label"]}
+                for v in conn.execute(
+                    "SELECT id, set_prefix, collector_number, rarity_label, rarity "
+                    "FROM ga_cards WHERE card_id=? "
+                    "ORDER BY set_prefix, collector_number", (r["card_id"],))]
+    conn.close()
+    return jsonify({
+        "game": "ga", "id": r["id"], "name": r["name"],
+        "element": r["element"], "classes": r["classes"], "types": r["types"],
+        "subtypes": r["subtypes"], "cost_memory": r["cost_memory"],
+        "cost_reserve": r["cost_reserve"], "level": r["level"],
+        "power": r["power"], "life": r["life"], "durability": r["durability"],
+        "speed": r["speed"], "effect": r["effect"],
+        "set_prefix": r["set_prefix"], "set_name": r["set_name"],
+        "collector_number": r["collector_number"], "rarity": r["rarity_label"],
+        "image_url": f"/img/ga/{r['image']}",
+        "variants": variants,
+        "official_url": f"https://index.gatcg.com/cards/{r['slug']}",
+    })
+
+
 @app.get("/api/card/<game>/<int:card_id>")
 def api_card_detail(game, card_id):
     """卡片詳情（點卡片彈出的視窗用）。兩遊戲欄位不同：
@@ -677,6 +770,14 @@ def api_cards():
                 "SELECT * FROM gundam_cards WHERE id=?", (cid,)).fetchone()
             if r:
                 cards.append(gcg_card_dict(r))
+        conn.close()
+        return jsonify({"cards": cards})
+    if game == "ga":  # GA edition id 是字串（uuid）
+        for cid in raw_ids:
+            r = conn.execute(
+                "SELECT * FROM ga_cards WHERE id=?", (cid,)).fetchone()
+            if r:
+                cards.append(ga_card_dict(r))
         conn.close()
         return jsonify({"cards": cards})
     try:
@@ -865,13 +966,20 @@ def _card_listings(conn, game, card_id, rarity, lang, art):
     key_id = int(card_id) if game in ("pkm", "ygo") else str(card_id)
     # 鋼彈稀有度是卡片固有屬性（含異圖 +／++），前端不會傳，改用卡片實際稀有度，
     # 讓快取鍵與 /api/compare 一致、且異圖過濾生效
-    gcg_row = None
+    gcg_row = ga_row = None
     if game == "gcg":
         gcg_row = conn.execute(
             "SELECT * FROM gundam_cards WHERE id=?", (key_id,)).fetchone()
         if not gcg_row:
             return []
         rarity = gcg_row["rarity"]
+    elif game == "ga":
+        # GA 稀有度是版本固有屬性；變動維度是普卡/閃卡（由 lang 承載）
+        ga_row = conn.execute(
+            "SELECT * FROM ga_cards WHERE id=?", (key_id,)).fetchone()
+        if not ga_row:
+            return []
+        rarity = ga_row["rarity_label"]
     cache_key = (game, key_id, rarity, lang, art)
     cached = _listing_cache.get(cache_key)
     if cached and time.time() - cached[0] < LISTING_CACHE_TTL:
@@ -892,6 +1000,10 @@ def _card_listings(conn, game, card_id, rarity, lang, art):
     elif game == "gcg":
         listings = find_listings_for_gundam(
             gcg_row["name_tc"], gcg_row["id"], lang, rarity=rarity)
+    elif game == "ga":
+        listings = find_listings_for_ga(
+            ga_row["name"], ga_row["set_prefix"], ga_row["collector_number"],
+            rarity=rarity, foil=lang)
     else:
         row = conn.execute(
             "SELECT * FROM cards WHERE id=?", (key_id,)).fetchone()
@@ -990,6 +1102,21 @@ def api_compare():
                     "rarity": row["rarity"],
                     "lang": (it.get("lang") or None), "art": None, "qty": qty,
                 })
+        elif game == "ga":
+            row = conn.execute(
+                "SELECT * FROM ga_cards WHERE id=?", (it["card_id"],)).fetchone()
+            if row:
+                wants.append({
+                    "key": f"ga:{row['id']}", "game": "ga", "card_id": row["id"],
+                    "name": row["name"], "names": None,
+                    "collector_number": f"{row['set_prefix']}-{row['collector_number']}",
+                    "set_prefix": row["set_prefix"],
+                    "ga_number": row["collector_number"],
+                    "rarity": row["rarity_label"],
+                    # GA 用 lang 欄位承載「普卡/閃卡」（沿用願望清單 lang 機制）
+                    "lang": (it.get("foil") or it.get("lang") or None),
+                    "art": None, "qty": qty,
+                })
         else:
             row = conn.execute(
                 "SELECT * FROM cards WHERE id=?", (it["card_id"],)).fetchone()
@@ -1020,6 +1147,10 @@ def api_compare():
             elif w["game"] == "gcg":
                 listings = find_listings_for_gundam(
                     w["name"], w["card_id"], w["lang"], rarity=w["rarity"])
+            elif w["game"] == "ga":
+                listings = find_listings_for_ga(
+                    w["name"], w["set_prefix"], w["ga_number"],
+                    rarity=w["rarity"], foil=w["lang"])
             else:
                 listings = find_listings_for_card(
                     w["name"], w["collector_number"], w["rarity"])
@@ -1233,6 +1364,10 @@ def _card_snapshot(conn, game, card_id):
         r = conn.execute(
             "SELECT name_tc FROM gundam_cards WHERE id=?", (card_id,)).fetchone()
         return (r["name_tc"], f"/img/gcg/{card_id}") if r else (None, None)
+    if game == "ga":
+        r = conn.execute(
+            "SELECT name, image FROM ga_cards WHERE id=?", (card_id,)).fetchone()
+        return (r["name"], f"/img/ga/{r['image']}") if r else (None, None)
     r = conn.execute("SELECT name FROM cards WHERE id=?", (card_id,)).fetchone()
     return (r["name"], f"/img/pkm/{card_id}") if r else (None, None)
 

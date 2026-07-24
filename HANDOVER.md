@@ -17,7 +17,7 @@
 
 **第三大功能——到價通知**：使用者為想要的卡設定目標價，程式定期到露天查詢，當最低價跌破目標時透過**使用者自己填的 Discord Webhook** 推播通知（見第九節）。
 
-**支援三款遊戲**：寶可夢（繁中）、遊戲王、鋼彈卡片遊戲 GCG。
+**支援四款遊戲**：寶可夢（繁中）、遊戲王、鋼彈卡片遊戲 GCG、Grand Archive（GA，英文）。
 
 ---
 
@@ -57,7 +57,8 @@
 | **寶可夢** | 官方繁中卡查 asia.pokemon-card.com/tw（爬蟲） | 官方繁中卡圖 | ~14,179 |
 | **遊戲王** | 百鴿 ygocdb.com 全量匯出檔（簡中，OpenCC 轉繁） | Konami 官方日文卡圖 | ~14,195 |
 | **鋼彈 GCG** | 官方繁中站 gundam-gcg.com/zh-tw（爬蟲） | 官方卡圖（日文卡面） | ~1,355（含異圖平行卡） |
-| **比價（三款共用）** | 露天拍賣公開 JSON API（rtapi.ruten.com.tw） | — | 即時 |
+| **Grand Archive** | 官方公開 JSON API api.gatcg.com（免爬 HTML） | 官方卡圖 api.gatcg.com/cards/images | 2,240 張／4,504 版本（全英文，美版） |
+| **比價（四款共用）** | 露天拍賣公開 JSON API（rtapi.ruten.com.tw） | — | 即時 |
 
 **重要限制**：
 - 露天用的是「其前端網頁呼叫的非官方 JSON API」，**露天改版即可能失效**，需控制請求頻率避免被封。
@@ -115,7 +116,12 @@
 
 9. **離群價過濾**（`ruten.py` 的 `drop_price_outliers`）：露天「多規格商品」會把最便宜規格的價當商品價（標題對到卡、但那價其實是同賣場另一張便宜卡），或有 1 元起標，污染「最低價」。做法：商品數 ≥4 時取中位數，剔除低於「中位數 × 0.1」者（相對門檻會隨卡價縮放，便宜卡的便宜商品不誤刪）。**比價、即時報價、到價通知三處都套用**（compare 的 per-card 迴圈、`app.py` 的 `_card_listings`、`alerts._search`），確保三邊「最低價」一致。要調鬆緊改 `rel_floor`／`min_n`。
 
-10. **海外美金商品過濾**（`search_products`，2026-07-21）：露天會混入海外賣場商品，其 prod API 的 **`Currency` 欄位是 `USD`**、`PriceRange` 是美金數字——若當台幣顯示會變離譜低價（US$2.53 → NT$2.53，就是先前那批英文標題「Gundam … Japanese」的來源）。做法：`search_products` 回傳前**只留 `Currency in (None, "TWD")`**（缺欄位保守保留，避免 API 變動誤刪）。這是**單一 choke point**，三款遊戲全受惠。⚠️ 目前是「濾掉不換算」——沒做 USD→TWD 匯率換算（匯率會浮動、跨境運費/報關也不同，台灣買家多半不會買）。要顯示海外價得另存 `Currency` 並在前端標示幣別。
+10. **海外美金商品過濾**（`search_products`，2026-07-21）：露天會混入海外賣場商品，其 prod API 的 **`Currency` 欄位是 `USD`**、`PriceRange` 是美金數字——若當台幣顯示會變離譜低價（US$2.53 → NT$2.53，就是先前那批英文標題「Gundam … Japanese」的來源）。做法：`search_products` 回傳前**只留 `Currency in (None, "TWD")`**（缺欄位保守保留，避免 API 變動誤刪）。這是**單一 choke point**，四款遊戲全受惠。⚠️ 目前是「濾掉不換算」——沒做 USD→TWD 匯率換算（匯率會浮動、跨境運費/報關也不同，台灣買家多半不會買）。要顯示海外價得另存 `Currency` 並在前端標示幣別。
+
+11. **Grand Archive（GA）＝全英文**（2026-07-21 新增）：台灣賣美版、無繁中印刷，官方/露天賣家全用英文卡名。資料來源是官方公開 API `api.gatcg.com`（免爬 HTML，2240 卡/4504 版本，稀有度數值 1..9 →字母見 `crawler/grand_archive.py` 的 `RARITY_MAP`）。每個 edition（印刷版本）一列存 `ga_cards`，同卡不同版本以 `card_id` 分群。**搜尋走英文名或卡號**（如 Volnia、RDO-204），非中文。
+    - **露天比對** `find_listings_for_ga`（實證賣家標法：`Grand Archive/GA + 英文名 + 系列+卡號 + 稀有度/普閃`）：一律要求標題含 **GA/Grand Archive 關鍵字**排除跨遊戲誤中（如遊戲王「Ga P.U.N.K.」）；「系列+卡號」都中＝定位到該版本→strong，只中卡名→weak。長名標題常被截斷，靠卡號定位。
+    - **普卡/閃卡**價差大（普卡 5、閃卡 180），用願望清單的 **`lang` 欄位承載**（值「普卡」「閃卡」，比照鋼彈用 lang 裝版本）——所以 GA 沒有獨立 foil 欄位，前端 GA 的「lang 選單」顯示普/閃。稀有度是版本固有屬性不需選。
+    - ⚠️ **同名不同號會弱命中**：卡名是另一張卡名的子字串時（如「Volnia」命中「Zinn, Volnia Abbess」）會以 weak 混入；已靠 strong 優先＋離群價過濾緩解，要更準需比對標題卡號差異。
 
 ---
 
