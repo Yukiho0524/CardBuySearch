@@ -77,6 +77,27 @@ def img_gcg(card_id):
     return resp
 
 
+@app.get("/img/ga/<name>")
+def img_ga(name):
+    """Grand Archive 卡圖代理＋磁碟快取（來源 api.gatcg.com/cards/images/…）。"""
+    if not re.fullmatch(r"[A-Za-z0-9_-]+\.(jpg|jpeg|png|webp)", name):
+        abort(404)
+    cache = IMG_CACHE / "ga" / name
+    if not cache.exists():
+        try:
+            r = _requests.get(
+                f"https://api.gatcg.com/cards/images/{name}", timeout=20,
+                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"})
+            r.raise_for_status()
+        except Exception:
+            abort(502)
+        cache.parent.mkdir(parents=True, exist_ok=True)
+        cache.write_bytes(r.content)
+    resp = send_from_directory(cache.parent, cache.name)
+    resp.headers["Cache-Control"] = "public, max-age=604800"
+    return resp
+
+
 @app.get("/img/<game>/<int:card_id>")
 def img_proxy(game, card_id):
     """卡圖代理＋磁碟快取。官方圖伺服器對瀏覽器跨站請求會停滯，改由後端抓取後供應同源圖片。"""

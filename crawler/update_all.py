@@ -79,11 +79,17 @@ def gundam_update():
     crawl()  # 列舉各系列、抓新卡詳細與卡圖（已抓的自動跳過）
 
 
+def ga_update():
+    from crawler.grand_archive import crawl
+    crawl()  # 官方 API 全量重抓（INSERT OR REPLACE，新卡/改動自動更新）
+
+
 if __name__ == "__main__":
     log("========== 每週更新開始 ==========")
     step("寶可夢增量爬蟲", pkm_update)
     step("遊戲王全量匯入", ygo_update)
     step("鋼彈 GCG 更新", gundam_update)
+    step("Grand Archive 更新", ga_update)
     step("譯名字典重學", alias_update)
     step("圖片索引補建", imghash_update)
     step("Konami 收錄預抓", printings_update)

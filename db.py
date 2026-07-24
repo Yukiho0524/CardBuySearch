@@ -93,6 +93,39 @@ CREATE TABLE IF NOT EXISTS gundam_cards (
 CREATE INDEX IF NOT EXISTS idx_gundam_name ON gundam_cards(name_tc);
 CREATE INDEX IF NOT EXISTS idx_gundam_pack ON gundam_cards(pack);
 
+-- Grand Archive TCG（GA，來源：官方 API api.gatcg.com）。
+-- 全英文（台灣賣美版、無繁中印刷），每一列 = 一個 edition（可買的印刷版本），
+-- 比照寶可夢/鋼彈；同一張卡的不同版本以 card_id 分群。
+CREATE TABLE IF NOT EXISTS ga_cards (
+    id           TEXT PRIMARY KEY,   -- edition uuid（每個印刷版本唯一）
+    card_id      TEXT,               -- 母卡 id（分群同卡不同版本用）
+    slug         TEXT,               -- edition slug（官方頁連結）
+    name         TEXT,               -- 英文卡名
+    element      TEXT,               -- NORM/FIRE/WATER/WIND/...
+    classes      TEXT,               -- 職業（逗號分隔）WARRIOR/MAGE/...
+    types        TEXT,               -- 卡種 CHAMPION/ALLY/ACTION/ITEM/REGALIA...
+    subtypes     TEXT,
+    cost_memory  INTEGER,
+    cost_reserve INTEGER,
+    level        INTEGER,
+    power        INTEGER,
+    life         INTEGER,
+    durability   INTEGER,
+    speed        INTEGER,
+    effect       TEXT,
+    set_prefix   TEXT,               -- 系列代碼（DTR/RDO/DOA/FTC...）
+    set_name     TEXT,
+    collector_number TEXT,           -- 卡號（如 015、369）
+    rarity       INTEGER,            -- 數值稀有度（1..9）
+    rarity_label TEXT,               -- 對照字母 C/U/R/SR/UR/PR/CSR/CUR/CPR
+    image        TEXT,               -- 圖片 uuid（供 /img/ga 代理）
+    language     TEXT,
+    detail_fetched INTEGER DEFAULT 1
+);
+CREATE INDEX IF NOT EXISTS idx_ga_name ON ga_cards(name);
+CREATE INDEX IF NOT EXISTS idx_ga_card ON ga_cards(card_id);
+CREATE INDEX IF NOT EXISTS idx_ga_set ON ga_cards(set_prefix);
+
 -- 價格快照：每次比價時記錄各卡（含條件）在露天的最低價
 CREATE TABLE IF NOT EXISTS price_history (
     game    TEXT NOT NULL,
