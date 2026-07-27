@@ -115,6 +115,7 @@ CREATE TABLE IF NOT EXISTS ga_cards (
     effect       TEXT,
     set_prefix   TEXT,               -- 系列代碼（DTR/RDO/DOA/FTC...）
     set_name     TEXT,
+    set_release  TEXT,               -- 系列發售日（排序用，越新越前）
     collector_number TEXT,           -- 卡號（如 015、369）
     rarity       INTEGER,            -- 數值稀有度（1..9）
     rarity_label TEXT,               -- 對照字母 C/U/R/SR/UR/PR/CSR/CUR/CPR
@@ -189,6 +190,7 @@ def get_conn():
         ("cards", "hp", "INTEGER"),
         ("gundam_cards", "effect", "TEXT"),  # 鋼彈效果文字
         ("price_alerts", "client_id", "TEXT"),  # 舊庫補：訪客識別
+        ("ga_cards", "set_release", "TEXT"),    # GA 系列發售日（排序用）
     ):
         try:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")

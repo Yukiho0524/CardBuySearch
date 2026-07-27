@@ -290,6 +290,15 @@ GUNDAM_PRODUCTS = {
     "ST07": "Celestial Drive", "ST08": "Flash of Radiance", "ST09": "Destiny Ignition",
 }
 
+# 鋼彈系列發售順序（舊→新，官方發售日：ST01-04 2025-07、GD01 2025-07、
+# ST05 2025-09、ST06/GD02 2025-10、GD03/ST07/ST08 2026-01、GD04/GD05/ST09 之後）。
+# 一覽依此新→舊排序（比照寶可夢/遊戲王）。新系列上市時往這裡末端補即可。
+GUNDAM_SET_ORDER = ["ST01", "ST02", "ST03", "ST04", "GD01", "ST05", "ST06",
+                    "GD02", "GD03", "ST07", "ST08", "GD04", "ST09", "GD05"]
+# SQL 排序鍵（越新分數越高）；pack 不在清單者給 -1 排最後
+GUNDAM_RANK_SQL = ("CASE pack " + " ".join(
+    f"WHEN '{p}' THEN {i}" for i, p in enumerate(GUNDAM_SET_ORDER)) + " ELSE -1 END")
+
 
 def pkm_product_code(set_mark):
     """set_mark（如 exp_SV8a、mtl_f）→ 產品代碼（SV8A、MTL），合併箔面變體。"""
@@ -364,8 +373,12 @@ def api_browse_options():
                 "SELECT DISTINCT level FROM gundam_cards WHERE level IS NOT NULL "
                 "ORDER BY level")],
             "sources": distinct("source"),
-            "products": [{"value": p, "label": f"{p}　{GUNDAM_PRODUCTS.get(p, '')}".strip()}
-                         for p in distinct("pack")],
+            "products": [{"value": r[0],
+                          "label": f"{r[0]}　{GUNDAM_PRODUCTS.get(r[0], '')}".strip()}
+                         for r in conn.execute(
+                             "SELECT DISTINCT pack FROM gundam_cards "
+                             "WHERE pack IS NOT NULL AND detail_fetched=1 "
+                             f"ORDER BY {GUNDAM_RANK_SQL} DESC")],
             "rarities": distinct("rarity"),
         }
     elif game == "ga":
@@ -386,7 +399,8 @@ def api_browse_options():
                       "label": f"{r['set_prefix']}　{r['set_name'] or ''}".strip()}
                      for r in conn.execute(
                          "SELECT set_prefix, MAX(set_name) AS set_name FROM ga_cards "
-                         "GROUP BY set_prefix ORDER BY set_prefix")],
+                         "GROUP BY set_prefix "
+                         "ORDER BY MAX(set_release) DESC, set_prefix")],
             "rarities": [r[0] for r in conn.execute(
                 "SELECT rarity_label FROM ga_cards WHERE rarity_label IS NOT NULL "
                 "GROUP BY rarity_label ORDER BY MIN(rarity)")],
@@ -477,7 +491,8 @@ def api_browse():
         total = conn.execute(
             f"SELECT COUNT(*) FROM gundam_cards {where}", params).fetchone()[0]
         rows = conn.execute(
-            f"SELECT * FROM gundam_cards {where} ORDER BY id LIMIT 60 OFFSET ?",
+            f"SELECT * FROM gundam_cards {where} "
+            f"ORDER BY {GUNDAM_RANK_SQL} DESC, id LIMIT 60 OFFSET ?",
             params + [offset]).fetchall()
         cards = [gcg_card_dict(r) for r in rows]
     elif game == "ga":
@@ -498,8 +513,8 @@ def api_browse():
             f"SELECT COUNT(*) FROM ga_cards {where}", params).fetchone()[0]
         rows = conn.execute(
             f"SELECT * FROM ga_cards {where} "
-            f"ORDER BY set_prefix, collector_number LIMIT 60 OFFSET ?",
-            params + [offset]).fetchall()
+            f"ORDER BY set_release DESC, set_prefix, collector_number "
+            f"LIMIT 60 OFFSET ?", params + [offset]).fetchall()
         cards = [ga_card_dict(r) for r in rows]
     else:
         conds, params = ["detail_fetched=1"], []

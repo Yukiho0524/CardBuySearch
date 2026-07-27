@@ -72,6 +72,7 @@ def _rows_from_card(card):
             "slug": e.get("slug"),
             "set_prefix": s.get("prefix"),
             "set_name": s.get("name"),
+            "set_release": s.get("release_date"),
             "collector_number": e.get("collector_number"),
             "rarity": rarity,
             "rarity_label": RARITY_MAP.get(rarity),
@@ -84,7 +85,8 @@ def _rows_from_card(card):
 COLS = ["id", "card_id", "slug", "name", "element", "classes", "types",
         "subtypes", "cost_memory", "cost_reserve", "level", "power", "life",
         "durability", "speed", "effect", "set_prefix", "set_name",
-        "collector_number", "rarity", "rarity_label", "image", "language"]
+        "set_release", "collector_number", "rarity", "rarity_label", "image",
+        "language"]
 
 
 def crawl():
