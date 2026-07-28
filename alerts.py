@@ -66,7 +66,7 @@ def _search(conn, a):
             return []
         listings = find_listings_for_ga(
             row["name"], row["set_prefix"], row["collector_number"],
-            rarity=row["rarity_label"], foil=a["lang"])
+            foil=a["lang"])
     else:
         row = conn.execute(
             "SELECT * FROM cards WHERE id=?", (a["card_id"],)).fetchone()

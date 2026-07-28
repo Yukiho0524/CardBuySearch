@@ -34,6 +34,14 @@ if __name__ == "__main__":
     try:
         res = alerts.check_all(conn, verbose=True)
         log(f"檢查 {res['checked']} 筆，觸發 {res['fired']} 筆通知")
+        # 清理 180 天前的價格快照，避免 price_history 無限成長
+        # （比價/走勢查詢只看近 30 天）
+        cur = conn.execute(
+            "DELETE FROM price_history "
+            "WHERE ts < datetime('now', 'localtime', '-180 days')")
+        conn.commit()
+        if cur.rowcount:
+            log(f"清理舊價格快照 {cur.rowcount} 筆")
     except Exception:
         import traceback
         log("檢查失敗：\n" + traceback.format_exc())

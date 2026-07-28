@@ -42,13 +42,29 @@ CONFIDENCE_ORDER = {"strong": 0, "weak": 1, "maybe": 2}
 # 露天查詢結果快取（10 分鐘），避免重複比價時高頻打露天
 _listing_cache = {}
 LISTING_CACHE_TTL = 600
+LISTING_CACHE_MAX = 1000  # 上限，避免長期執行記憶體只增不減
+
+
+def _cache_put(key, listings):
+    """寫入露天查詢快取，超過上限時先清過期、再丟最舊，避免無限成長。"""
+    if len(_listing_cache) >= LISTING_CACHE_MAX and key not in _listing_cache:
+        now = time.time()
+        for k in [k for k, (ts, _) in _listing_cache.items()
+                  if now - ts > LISTING_CACHE_TTL]:
+            _listing_cache.pop(k, None)
+        if len(_listing_cache) >= LISTING_CACHE_MAX:
+            oldest = min(_listing_cache, key=lambda k: _listing_cache[k][0])
+            _listing_cache.pop(oldest, None)
+    _listing_cache[key] = (time.time(), listings)
 
 # 只允許 Discord 官方 Webhook 網址（避免被填成任意網址亂打）
 DISCORD_WEBHOOK_RE = re.compile(
     r"^https://(?:canary\.|ptb\.)?discord(?:app)?\.com/api/webhooks/\d+/[\w-]+$")
 
 # 「立即檢查」的背景執行狀態（避免同時跑多次；供前端輪詢）
-_alert_check = {"running": False, "ts": None, "fired": 0}
+# 「立即檢查」的背景執行狀態，以 client_id 分開（一人檢查不擋別人）
+_alert_running = set()   # 檢查進行中的 client_id
+_alert_fired = {}        # client_id -> 最近一次觸發數
 
 
 @app.get("/")
@@ -428,7 +444,10 @@ def api_browse_options():
 def api_browse():
     """全卡一覽（篩選＋分頁，每頁 60 張、新卡在前）。"""
     game = request.args.get("game", "pkm")
-    offset = max(0, int(request.args.get("offset", 0)))
+    try:
+        offset = max(0, int(request.args.get("offset", 0)))
+    except (TypeError, ValueError):
+        offset = 0
     conn = get_conn()
     if game == "ygo":
         conds, params = [], []
@@ -1018,7 +1037,7 @@ def _card_listings(conn, game, card_id, rarity, lang, art):
     elif game == "ga":
         listings = find_listings_for_ga(
             ga_row["name"], ga_row["set_prefix"], ga_row["collector_number"],
-            rarity=rarity, foil=lang)
+            foil=lang)
     else:
         row = conn.execute(
             "SELECT * FROM cards WHERE id=?", (key_id,)).fetchone()
@@ -1029,7 +1048,7 @@ def _card_listings(conn, game, card_id, rarity, lang, art):
     listings = [l for l in listings if l["price"] and (l["stock"] or 0) > 0]
     listings = drop_price_outliers(listings)
     listings.sort(key=lambda l: (CONFIDENCE_ORDER[l["confidence"]], l["price"]))
-    _listing_cache[cache_key] = (time.time(), listings)
+    _cache_put(cache_key, listings)
     return listings
 
 
@@ -1164,8 +1183,7 @@ def api_compare():
                     w["name"], w["card_id"], w["lang"], rarity=w["rarity"])
             elif w["game"] == "ga":
                 listings = find_listings_for_ga(
-                    w["name"], w["set_prefix"], w["ga_number"],
-                    rarity=w["rarity"], foil=w["lang"])
+                    w["name"], w["set_prefix"], w["ga_number"], foil=w["lang"])
             else:
                 listings = find_listings_for_card(
                     w["name"], w["collector_number"], w["rarity"])
@@ -1173,7 +1191,7 @@ def api_compare():
             listings = drop_price_outliers(listings)
             listings.sort(
                 key=lambda l: (CONFIDENCE_ORDER[l["confidence"]], l["price"]))
-            _listing_cache[cache_key] = (time.time(), listings)
+            _cache_put(cache_key, listings)
             if listings:  # 累積價格快照（快取命中不重複記錄）
                 hist_conn = get_conn()
                 hist_conn.execute(
@@ -1393,7 +1411,7 @@ def api_alerts_list():
     cid = _client_id()
     if not cid:
         return jsonify({"alerts": [], "webhook_set": False, "webhook_hint": "",
-                        "checking": _alert_check["running"]})
+                        "checking": False})
     conn = get_conn()
     alerts = [dict(r) for r in conn.execute(
         "SELECT * FROM price_alerts WHERE client_id=? ORDER BY id DESC", (cid,))]
@@ -1403,7 +1421,7 @@ def api_alerts_list():
         "alerts": alerts,
         "webhook_set": bool(webhook),
         "webhook_hint": _mask_webhook(webhook),
-        "checking": _alert_check["running"],
+        "checking": cid in _alert_running,
     })
 
 
@@ -1530,19 +1548,18 @@ def api_alerts_check():
     cid = _client_id()
     if not cid:
         return jsonify({"error": "缺少訪客識別"}), 400
-    if _alert_check["running"]:
+    if cid in _alert_running:
         return jsonify({"running": True, "message": "檢查進行中…"})
 
     def run():
-        _alert_check["running"] = True
+        _alert_running.add(cid)
         try:
             conn = get_conn()
             res = alerts_mod.check_all(conn, client_id=cid)
             conn.close()
-            _alert_check["fired"] = res["fired"]
-            _alert_check["ts"] = time.time()
+            _alert_fired[cid] = res["fired"]
         finally:
-            _alert_check["running"] = False
+            _alert_running.discard(cid)
 
     threading.Thread(target=run, daemon=True).start()
     return jsonify({"running": True, "message": "開始檢查，稍候即可看到結果"})

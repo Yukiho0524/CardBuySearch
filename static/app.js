@@ -264,11 +264,11 @@ function cardEl(c) {
     : `${c.set_alpha || ""} ${c.collector_number || ""}`;
   div.innerHTML = `
     <div class="card-click" title="查看卡片詳情">
-      <img src="${c.image_url || ""}" alt="${c.name || ""}">
+      <img src="${c.image_url || ""}" alt="${esc(c.name || "")}">
       <div class="meta">
-        <span class="name">${c.name || "（未知）"}</span>
-        <span class="sub">${sub}</span>
-        ${c.rarity ? `<span class="rarity-tag">${c.rarity}</span>` : ""}
+        <span class="name">${esc(c.name) || "（未知）"}</span>
+        <span class="sub">${esc(sub)}</span>
+        ${c.rarity ? `<span class="rarity-tag">${esc(c.rarity)}</span>` : ""}
       </div>
     </div>
     <button ${inList ? "disabled" : ""}>${inList ? "已加入" : "＋ 加入清單"}</button>`;
@@ -673,7 +673,7 @@ function renderWishlist() {
       <img src="${c.image_url || ""}" alt="">
       <div class="winfo">
         <div class="wtop">
-          <span class="wname"><span class="game-icon">${GAME_LABEL[c.game]}</span> <b>${c.name}</b></span>
+          <span class="wname"><span class="game-icon">${GAME_LABEL[c.game]}</span> <b>${esc(c.name)}</b></span>
           <input class="qty" type="number" min="1" max="9" value="${item.qty}">
           <button class="bell" title="設定到價通知">🔔</button>
           <button class="rm" title="移除">✕</button>
@@ -813,14 +813,14 @@ function renderCompare(data) {
   const mkts = data.wishlist.filter((w) => w.market && w.market.n);
   if (mkts.length) {
     statusHtml += "<br><small>本次行情：" + mkts.map((w) =>
-      `${w.card_name} ${fmt(w.market.low)}${w.market.high > w.market.low ? "～" + fmt(w.market.high) : ""}` +
+      `${esc(w.card_name)} ${fmt(w.market.low)}${w.market.high > w.market.low ? "～" + fmt(w.market.high) : ""}` +
       sparkline(w.history_series)
     ).join("；") + "</small>";
   }
   const hist = data.wishlist.filter((w) => w.history && w.history.samples > 1);
   if (hist.length) {
     statusHtml += "<br><small>30 天歷史參考價（本站查詢紀錄）：" +
-      hist.map((w) => `${w.card_name} 低 ${fmt(w.history.low)}／均 ${fmt(w.history.avg)}`).join("；") +
+      hist.map((w) => `${esc(w.card_name)} 低 ${fmt(w.history.low)}／均 ${fmt(w.history.avg)}`).join("；") +
       "</small>";
   }
   $("#compareStatus").innerHTML = statusHtml;
@@ -843,8 +843,8 @@ function renderCompare(data) {
       const mkt = marketByKey[`${c.game}:${c.card_id}`];
       return `
       <tr>
-        <td>${c.card_name}<br><small>${wantDesc(c)}</small></td>
-        <td><a href="${c.listing.url}" target="_blank" rel="noopener">${c.listing.title}</a></td>
+        <td>${esc(c.card_name)}<br><small>${wantDesc(c)}</small></td>
+        <td><a href="${esc(c.listing.url)}" target="_blank" rel="noopener">${esc(c.listing.title)}</a></td>
         <td><span class="conf ${c.listing.confidence}">${confLabel[c.listing.confidence]}</span></td>
         <td>${priceCell(c.listing, mkt)}<br>${marketNote(mkt)}</td>
       </tr>`;
@@ -852,8 +852,8 @@ function renderCompare(data) {
     div.innerHTML = `
       <div class="seller-head">
         <span>賣家 ${s.store_url
-          ? `<a href="${s.store_url}" target="_blank" rel="noopener">${s.seller_name || s.seller_nick}</a>`
-          : `#${s.seller_id}（<a href="${s.covered[0].listing.url}" target="_blank" rel="noopener">看商品頁</a>）`}
+          ? `<a href="${esc(s.store_url)}" target="_blank" rel="noopener">${esc(s.seller_name || s.seller_nick)}</a>`
+          : `#${esc(String(s.seller_id))}（<a href="${esc(s.covered[0].listing.url)}" target="_blank" rel="noopener">看商品頁</a>）`}
           ${creditNote(s)}</span>
         <span class="cov ${covClass}">${s.complete ? "✅ 全齊" : `覆蓋 ${s.covered_count}/${s.total_count} 張`}</span>
         ${priceBadge}
@@ -862,7 +862,7 @@ function renderCompare(data) {
       <table class="listing-table">
         <tr><th>卡片</th><th>露天商品</th><th>比對信心</th><th>單價</th></tr>${rows}
       </table>
-      ${s.missing.length ? `<p class="missing-line">缺：${s.missing.map((m) => `${m.card_name}${m.rarity ? "（" + m.rarity + "）" : ""}`).join("、")}</p>` : ""}`;
+      ${s.missing.length ? `<p class="missing-line">缺：${s.missing.map((m) => `${esc(m.card_name)}${m.rarity ? "（" + esc(m.rarity) + "）" : ""}`).join("、")}</p>` : ""}`;
     box.appendChild(div);
   }
 
@@ -874,8 +874,8 @@ function renderCompare(data) {
       const mkt = marketByKey[`${c.game}:${c.card_id}`];
       return `
       <tr>
-        <td>${c.card_name}<br><small>${wantDesc(c)}</small></td>
-        <td><a href="${c.listing.url}" target="_blank" rel="noopener">${c.listing.title}</a></td>
+        <td>${esc(c.card_name)}<br><small>${wantDesc(c)}</small></td>
+        <td><a href="${esc(c.listing.url)}" target="_blank" rel="noopener">${esc(c.listing.title)}</a></td>
         <td>賣家 #${c.seller_id}</td>
         <td>${priceCell(c.listing, mkt)}</td>
       </tr>`;
@@ -898,8 +898,8 @@ function renderCompare(data) {
     div.className = "seller-block split-block";
     const rows = sp.items.map((c) => `
       <tr>
-        <td>${c.card_name}<br><small>${wantDesc(c)}</small></td>
-        <td><a href="${c.listing.url}" target="_blank" rel="noopener">${c.listing.title}</a></td>
+        <td>${esc(c.card_name)}<br><small>${wantDesc(c)}</small></td>
+        <td><a href="${esc(c.listing.url)}" target="_blank" rel="noopener">${esc(c.listing.title)}</a></td>
         <td>賣家 #${c.listing.seller_id}</td>
         <td>${fmt(c.listing.price)}</td>
       </tr>`).join("");

@@ -500,8 +500,8 @@ def _squash_ga(s):
     return re.sub(r"[\s,.'’\-–·・]", "", _norm(s))
 
 
-def find_listings_for_ga(name, set_prefix, collector_number, rarity=None,
-                         foil=None, limit=40):
+def find_listings_for_ga(name, set_prefix, collector_number, foil=None,
+                         limit=40):
     """Grand Archive：搜露天並比對（英文名＋系列＋卡號）。
 
     比對訊號：GA 關鍵字（必要，排除跨遊戲）＋卡名＋「系列＋卡號」定位版本。

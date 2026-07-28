@@ -170,12 +170,10 @@ CREATE INDEX IF NOT EXISTS idx_price_alerts_status ON price_alerts(status);
 """
 
 
-def get_conn():
-    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=30)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA busy_timeout=30000")
-    conn.execute("PRAGMA journal_mode=WAL")
+_schema_ready = False  # schema/遷移每個行程只需跑一次
+
+
+def _ensure_schema(conn):
     conn.executescript(SCHEMA)
     # 遷移：舊資料庫補欄位（SQLite 無 ADD COLUMN IF NOT EXISTS）
     for table, col, typ in (
@@ -196,4 +194,17 @@ def get_conn():
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")
         except sqlite3.OperationalError:
             pass  # 欄位已存在
+
+
+def get_conn():
+    global _schema_ready
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(DB_PATH, timeout=30)
+    conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA busy_timeout=30000")
+    conn.execute("PRAGMA journal_mode=WAL")
+    if not _schema_ready:
+        # 建表/補欄位每個行程只做一次（冪等，避免每個請求都重跑）
+        _ensure_schema(conn)
+        _schema_ready = True
     return conn
