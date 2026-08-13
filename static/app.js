@@ -345,7 +345,44 @@ async function openCardModal(game, cardId) {
     : d.game === "gcg" ? gcgDetailHtml(d)
     : d.game === "ga" ? gaDetailHtml(d) : pkmDetailHtml(d);
   bindModalActions(d);
+  pushHistory(d);
 }
+
+// ---------- 歷史瀏覽 ----------
+// 純前端（localStorage），看過的卡留個入口方便回訪。上限 24 筆、最新在前。
+const HISTORY_MAX = 24;
+
+function pushHistory(d) {
+  let hist = [];
+  try { hist = JSON.parse(localStorage.getItem("cbs_history") || "[]"); } catch (e) { }
+  const key = `${d.game}:${d.id}`;
+  hist = hist.filter((h) => `${h.g}:${h.id}` !== key);   // 看過的往前挪，不重複
+  hist.unshift({ g: d.game, id: d.id, n: d.name, img: d.image_url });
+  localStorage.setItem("cbs_history", JSON.stringify(hist.slice(0, HISTORY_MAX)));
+  renderHistory();
+}
+
+function renderHistory() {
+  const box = $("#historyStrip");
+  const sec = $("#historySection");
+  if (!box || !sec) return;
+  let hist = [];
+  try { hist = JSON.parse(localStorage.getItem("cbs_history") || "[]"); } catch (e) { }
+  sec.hidden = !hist.length;
+  box.innerHTML = hist.map((h) =>
+    `<button class="hist-item" data-g="${esc(h.g)}" data-id="${esc(String(h.id))}"
+       title="${esc(h.n || "")}"><img src="${esc(h.img || "")}" alt=""><span>${esc(h.n || "")}</span></button>`
+  ).join("");
+  box.querySelectorAll(".hist-item").forEach((b) =>
+    b.addEventListener("click", () => openCardModal(b.dataset.g, b.dataset.id)));
+}
+
+$("#historyClear").addEventListener("click", () => {
+  localStorage.removeItem("cbs_history");
+  renderHistory();
+});
+
+renderHistory();
 
 function gcgDetailHtml(d) {
   const chips = [];
@@ -546,10 +583,15 @@ function bindModalActions(d) {
 }
 
 // ---------- 牌組匯入 ----------
+// 不直接塞進願望清單——先出校對頁。遊戲王譯名亂、寶可夢同名多版本、鋼彈異圖，
+// 靠模糊比對對到的那幾行最容易錯，讓人先看過再加入。
+let importItems = [];
+
 $("#importBtn").addEventListener("click", async () => {
   const text = $("#deckText").value.trim();
   if (!text) return;
   $("#importResult").textContent = "解析中…";
+  $("#importPreview").hidden = true;
   try {
     const res = await fetch("/api/import-deck", {
       method: "POST",
@@ -557,26 +599,80 @@ $("#importBtn").addEventListener("click", async () => {
       body: JSON.stringify({ game: currentGame(), text }),
     });
     const data = await res.json();
-    let added = 0;
-    for (const it of data.items) {
-      const key = keyOf(it.card);
-      if (wishlist.has(key)) {
-        wishlist.get(key).qty += it.qty;
-      } else {
-        wishlist.set(key, newWishItem(it.card, it.qty));
-        if (it.card.game === "ygo") loadCardRarities(key, it.card.id);
-      }
-      added++;
-    }
-    renderWishlist();
-    $("#importResult").textContent = `匯入 ${added} 種卡` +
-      (data.unmatched.length
-        ? `；${data.unmatched.length} 行無法辨識：${data.unmatched.slice(0, 3).join("、")}${data.unmatched.length > 3 ? "…" : ""}`
-        : "");
-    if (added) $("#deckText").value = "";
+    importItems = data.items || [];
+    renderImportPreview(data.unmatched || []);
   } catch (err) {
     $("#importResult").textContent = "匯入失敗：" + err.message;
   }
+});
+
+function renderImportPreview(unmatched) {
+  const fuzzy = importItems.filter((it) => it.match === "fuzzy").length;
+  $("#importResult").textContent =
+    `比對到 ${importItems.length} 種卡` +
+    (fuzzy ? `，其中 ${fuzzy} 種是模糊比對（下方標 ⚠，請確認）` : "") +
+    (unmatched.length ? `；${unmatched.length} 行無法辨識` : "");
+  if (!importItems.length && !unmatched.length) {
+    $("#importPreview").hidden = true;
+    return;
+  }
+  $("#previewList").innerHTML = importItems.map((it, i) => {
+    const c = it.card;
+    const sub = c.game === "ygo" ? (c.name_jp || "")
+      : `${c.collector_number || ""}${c.rarity ? "・" + c.rarity : ""}`;
+    const warn = it.match === "fuzzy";
+    return `<li class="${warn ? "fuzzy" : ""}">
+      <input type="checkbox" class="pick" data-i="${i}" checked>
+      <img src="${esc(c.image_url || "")}" alt="">
+      <div class="pinfo">
+        <b>${esc(c.name)}</b> ×${it.qty}
+        ${warn ? '<span class="warn-tag" title="靠模糊比對對到的，可能不是你要的那張">⚠ 模糊</span>' : ""}
+        <small>${esc(sub)}</small>
+        ${it.sources && it.sources.length
+          ? `<small class="src">原文：${esc(it.sources.join("、"))}</small>` : ""}
+      </div></li>`;
+  }).join("");
+  const um = $("#previewUnmatched");
+  um.hidden = !unmatched.length;
+  if (unmatched.length) {
+    um.innerHTML = `<b>無法辨識的 ${unmatched.length} 行</b>（不會加入）：<br>` +
+      unmatched.map((u) => esc(u)).join("<br>");
+  }
+  $("#importPreview").hidden = false;
+}
+
+$("#previewToggleAll").addEventListener("click", () => {
+  const boxes = [...document.querySelectorAll("#previewList .pick")];
+  const anyChecked = boxes.some((b) => b.checked);
+  boxes.forEach((b) => { b.checked = !anyChecked; });
+  $("#previewToggleAll").textContent = anyChecked ? "全選" : "全不選";
+});
+
+$("#previewCancel").addEventListener("click", () => {
+  $("#importPreview").hidden = true;
+  $("#importResult").textContent = "已取消，沒有加入任何卡。";
+});
+
+$("#previewConfirm").addEventListener("click", () => {
+  let added = 0;
+  document.querySelectorAll("#previewList .pick").forEach((box) => {
+    if (!box.checked) return;
+    const it = importItems[Number(box.dataset.i)];
+    if (!it) return;
+    const key = keyOf(it.card);
+    if (wishlist.has(key)) {
+      wishlist.get(key).qty += it.qty;
+    } else {
+      wishlist.set(key, newWishItem(it.card, it.qty));
+      if (it.card.game === "ygo") loadCardRarities(key, it.card.id);
+    }
+    added++;
+  });
+  renderWishlist();
+  $("#importPreview").hidden = true;
+  $("#importResult").textContent = added
+    ? `已加入 ${added} 種卡到願望清單。` : "沒有勾選任何卡。";
+  if (added) $("#deckText").value = "";
 });
 
 // ---------- 願望清單持久化與分享 ----------
@@ -1016,6 +1112,24 @@ function alertFetch(url, opts = {}) {
   return fetch(url, opts);
 }
 
+// 目標價輸入：純數字，或「-10%」「-10」這種相對基準的寫法。
+// base 為 null（查不到行情）時只接受純數字，避免相對於「沒有」算出怪數字。
+function parseTargetPrice(raw, base) {
+  const s = (raw || "").trim();
+  const pct = s.match(/^([+-]?\d+(?:\.\d+)?)\s*%$/);
+  if (pct) {
+    if (base == null) return null;
+    return Math.max(1, Math.round(base * (1 + parseFloat(pct[1]) / 100)));
+  }
+  const rel = s.match(/^([+-]\d+)$/);   // 明確帶正負號＝相對基準加減
+  if (rel) {
+    if (base == null) return null;
+    return Math.max(1, base + parseInt(rel[1], 10));
+  }
+  const n = parseInt(s.replace(/[^\d]/g, ""), 10);
+  return Number.isFinite(n) ? n : null;
+}
+
 // 從願望清單某張卡建立通知：沿用該卡目前選的稀有度/紙種/版本條件
 async function addAlertFromWish(item, bellBtn) {
   const c = item.card;
@@ -1036,19 +1150,36 @@ async function addAlertFromWish(item, bellBtn) {
   } catch (e) { /* 查不到就讓使用者直接填 */ }
   finally { if (bellBtn) { bellBtn.disabled = false; bellBtn.textContent = "🔔"; } }
 
-  let hint, def = "";
+  // 相對定價的基準：優先用目前最低價，沒有才退回 30 天均價
+  const base = (quote && quote.min_price != null) ? quote.min_price
+             : (quote && quote.avg_price != null) ? quote.avg_price : null;
+  const lines = [];
+  let def = "";
   if (quote && quote.min_price != null) {
-    hint = `目前露天最低約 ${fmt(quote.min_price)}（${quote.reliable_count} 筆可靠報價）`;
+    lines.push(`目前露天最低約 ${fmt(quote.min_price)}（${quote.reliable_count} 筆可靠報價）`);
     def = String(quote.min_price);
   } else {
-    hint = "目前露天查無符合的商品——仍可設定，之後有貨且達標會通知。";
+    lines.push("目前露天查無符合的商品——仍可設定，之後有貨且達標會通知。");
   }
+  if (quote && quote.avg_price != null) {
+    lines.push(`近 30 天均價 ${fmt(quote.avg_price)}、最低 ${fmt(quote.hist_low)}（${quote.hist_samples} 次紀錄）`);
+  }
+  if (quote && quote.stock) {
+    lines.push(`在售 ${quote.stock} 張${quote.sold ? `・累計成交 ${quote.sold}` : ""}`);
+  }
+  if (base != null) lines.push("可直接填數字，或填 -10% 表示比上面的基準低一成");
+
   const ans = prompt(
     `為「${c.name}」${cond ? "（" + cond + "）" : ""}設定目標價（NT$）\n` +
-    `${hint}\n露天最低價跌到這個價格以下時通知你：`, def);
+    `${lines.join("\n")}\n露天最低價跌到這個價格以下時通知你：`, def);
   if (ans === null) return;
-  const target = parseInt(ans.replace(/[^\d]/g, ""), 10);
-  if (!target || target <= 0) { alert("請輸入大於 0 的數字"); return; }
+  const target = parseTargetPrice(ans, base);
+  if (!target || target <= 0) {
+    alert(base == null
+      ? "請輸入大於 0 的數字"
+      : "請輸入大於 0 的數字，或像 -10% 這樣的百分比");
+    return;
+  }
   try {
     const res = await alertFetch("/api/alerts", {
       method: "POST",
@@ -1157,10 +1288,15 @@ function renderAlerts(alerts) {
 }
 
 async function editAlert(a) {
-  const ans = prompt(`修改「${a.card_name}」的目標價（NT$）：`, a.target_price);
+  // 基準用最近一次查到的最低價，讓這裡也能填「-10%」（與新增時同一套規則）
+  const base = a.last_price != null ? a.last_price : null;
+  const ans = prompt(
+    `修改「${a.card_name}」的目標價（NT$）：` +
+    (base != null ? `\n最近查到最低 ${fmt(base)}，可填 -10% 表示比它低一成` : ""),
+    a.target_price);
   if (ans === null) return;
-  const target = parseInt(String(ans).replace(/[^\d]/g, ""), 10);
-  if (!target || target <= 0) { alert("請輸入大於 0 的數字"); return; }
+  const target = parseTargetPrice(ans, base);
+  if (!target || target <= 0) { alert("請輸入大於 0 的數字，或像 -10% 這樣的百分比"); return; }
   updateAlert(a.id, { target_price: target });
 }
 
@@ -1479,3 +1615,36 @@ $("#deckDelete").addEventListener("click", async () => {
 });
 
 loadDecks();
+
+// ---------- 你最常查的卡 ----------
+// 依 price_history 統計（＝本機查過的紀錄，不是市場熱度）。切換遊戲時重載。
+async function loadTrending() {
+  const sec = $("#trendingSection");
+  let cards = [];
+  try {
+    const res = await fetch(`/api/trending?game=${currentGame()}`);
+    cards = (await res.json()).cards || [];
+  } catch (e) { return; }
+  sec.hidden = !cards.length;
+  $("#trendingList").innerHTML = cards.map((c) => {
+    const cond = [c.rarity, c.lang].filter(Boolean).join("・");
+    const flat = c.change_pct == null || c.change_pct === 0;
+    const up = !flat && c.change_pct > 0;
+    return `<button class="trend-item" data-g="${esc(c.game)}" data-id="${esc(c.card_id)}">
+      <img src="${esc(c.image_url || "")}" alt="">
+      <span class="tname">${esc(c.name)}</span>
+      ${cond ? `<span class="tcond">${esc(cond)}</span>` : ""}
+      <span class="tprice">${fmt(c.last_price)}</span>
+      <span class="tchg ${flat ? "" : up ? "up" : "down"}">${
+        flat ? "—" : `${up ? "▲" : "▼"} ${Math.abs(c.change_pct)}%`}</span>
+      <span class="tn">查過 ${c.samples} 次</span>
+    </button>`;
+  }).join("");
+  $("#trendingList").querySelectorAll(".trend-item").forEach((b) =>
+    b.addEventListener("click", () => openCardModal(b.dataset.g, b.dataset.id)));
+}
+
+document.querySelectorAll('input[name="game"]').forEach((r) =>
+  r.addEventListener("change", loadTrending));
+
+loadTrending();

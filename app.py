@@ -938,9 +938,20 @@ def api_import_deck():
         conn.close()
         return jsonify({"items": items, "unmatched": unmatched})
 
-    def add(card, qty):
-        counts[card["id"]] = counts.get(card["id"], 0) + qty
-        cards[card["id"]] = card
+    # 記匹配品質與原始行，供前端「校對」用：exact＝卡號/全名精準命中，
+    # fuzzy＝靠 LIKE/模糊搜尋才對到（遊戲王譯名亂、寶可夢同名多版本，這種最容易錯）
+    quality = {}  # card_id -> "exact" | "fuzzy"
+    sources = {}  # card_id -> [原始行]
+
+    def add(card, qty, match="exact", src=None):
+        cid = card["id"]
+        counts[cid] = counts.get(cid, 0) + qty
+        cards[cid] = card
+        # 同一張卡被多行對到時，只要有一行是模糊的就整筆標模糊（保守提醒）
+        if quality.get(cid) != "fuzzy":
+            quality[cid] = match
+        if src:
+            sources.setdefault(cid, []).append(src)
 
     qty_re = re.compile(
         r"^(?:(\d{1,2})[xX×*]?\s+)?(.+?)(?:\s*[xX×*]\s*(\d{1,2}))?$")
@@ -968,29 +979,33 @@ def api_import_deck():
             unmatched.append(raw)
             continue
         if game == "gcg":
+            match = "exact"
             row = conn.execute(
                 "SELECT * FROM gundam_cards WHERE detail_fetched=1 "
                 "AND (id=? OR name_tc=?) ORDER BY id LIMIT 1",
                 (name.upper(), name)).fetchone()
             if row is None:
+                match = "fuzzy"
                 row = conn.execute(
                     "SELECT * FROM gundam_cards WHERE detail_fetched=1 "
                     "AND name_tc LIKE ? ORDER BY id LIMIT 1",
                     (f"%{name}%",)).fetchone()
             if row:
-                add(gcg_card_dict(row), qty)
+                add(gcg_card_dict(row), qty, match, raw)
             else:
                 unmatched.append(raw)
             continue
         if game == "ygo":
             hits = search_ygo(conn, name, limit=1)
             if hits:
-                add(hits[0], qty)
+                # search_ygo 本身含同義詞/模糊比對，只有卡名完全相同才算精準
+                match = "exact" if hits[0].get("name") == name else "fuzzy"
+                add(hits[0], qty, match, raw)
             else:
                 unmatched.append(raw)
         else:
             num_m = num_re.search(name)
-            row = None
+            row, match = None, "exact"
             if num_m:
                 name_part = name[:num_m.start()].strip() or None
                 sql = ("SELECT * FROM cards WHERE detail_fetched=1 "
@@ -1005,17 +1020,21 @@ def api_import_deck():
                     "SELECT * FROM cards WHERE detail_fetched=1 AND name=? "
                     "ORDER BY id DESC", (name,)).fetchone()
             if row is None:
+                match = "fuzzy"   # 退到 LIKE：同名多版本時挑到的不一定是你要的
                 row = conn.execute(
                     "SELECT * FROM cards WHERE detail_fetched=1 AND name LIKE ? "
                     "ORDER BY length(name), id DESC", (f"%{name}%",)).fetchone()
             if row:
                 add({**dict(row), "game": "pkm",
-                     "image_url": f"/img/pkm/{row['id']}"}, qty)
+                     "image_url": f"/img/pkm/{row['id']}"}, qty, match, raw)
             else:
                 unmatched.append(raw)
     conn.close()
     return jsonify({
-        "items": [{"card": cards[cid], "qty": q} for cid, q in counts.items()],
+        "items": [{"card": cards[cid], "qty": q,
+                   "match": quality.get(cid, "exact"),
+                   "sources": sources.get(cid, [])}
+                  for cid, q in counts.items()],
         "unmatched": unmatched,
     })
 
@@ -1092,7 +1111,7 @@ def api_quote():
     p = request.get_json(force=True)
     game = p.get("game")
     card_id = p.get("card_id")
-    if game not in ("pkm", "ygo", "gcg") or card_id in (None, ""):
+    if game not in ("pkm", "ygo", "gcg", "ga") or card_id in (None, ""):
         return jsonify({"error": "缺少卡片資訊"}), 400
     conn = get_conn()
     try:
@@ -1102,10 +1121,19 @@ def api_quote():
     except Exception as e:
         conn.close()
         return jsonify({"error": f"查詢失敗：{e}"}), 500
+    # 30 天歷史均價：讓「以均價 -10% 設目標」這種相對定價有基準
+    hist = conn.execute(
+        "SELECT ROUND(AVG(price)) AS avg, MIN(price) AS lo, COUNT(*) AS n "
+        "FROM price_history WHERE game=? AND card_id=? "
+        "AND IFNULL(rarity,'')=IFNULL(?,'') AND IFNULL(lang,'')=IFNULL(?,'') "
+        "AND ts >= datetime('now', 'localtime', '-30 days')",
+        (game, str(card_id), p.get("rarity") or None,
+         p.get("lang") or None)).fetchone()
     conn.close()
     reliable = [l for l in listings if l["confidence"] in ("strong", "weak")]
     reliable_min = min((l["price"] for l in reliable), default=None)
     overall_min = min((l["price"] for l in listings), default=None)
+    _, stock, sold = liquidity(listings)
     return jsonify({
         "ok": True,
         "count": len(listings),
@@ -1113,6 +1141,12 @@ def api_quote():
         # 以可靠報價的最低價為主（與通知觸發一致），沒有才退回全部的最低
         "min_price": reliable_min if reliable_min is not None else overall_min,
         "reliable_min": reliable_min,
+        "stock": stock,
+        "sold": sold,
+        # 歷史為 0 筆時回 None，前端才知道要不要顯示「均價」這一項
+        "avg_price": int(hist["avg"]) if hist and hist["n"] else None,
+        "hist_low": hist["lo"] if hist and hist["n"] else None,
+        "hist_samples": hist["n"] if hist else 0,
     })
 
 
@@ -1470,7 +1504,7 @@ def api_alert_create():
     p = request.get_json(force=True)
     game = p.get("game")
     card_id = str(p.get("card_id") or "").strip()
-    if game not in ("pkm", "ygo", "gcg") or not card_id:
+    if game not in ("pkm", "ygo", "gcg", "ga") or not card_id:
         return jsonify({"error": "缺少卡片資訊"}), 400
     try:
         target = int(p.get("target_price"))
@@ -1866,6 +1900,53 @@ def api_collection_deduct():
             "owned": owned, "remaining": want - owned, "matched": used,
         })
     return jsonify({"items": out, "summary": {"kinds": kinds, "qty": total}})
+
+
+# ==================== 追蹤排行 ====================
+
+
+@app.get("/api/trending")
+def api_trending():
+    """近 30 天你查最多次的卡＋期間漲跌。
+
+    ⚠️ 資料來自 price_history，也就是**這台機器查過的紀錄**，不是市場熱度——
+    卡拍拍那種全站熱門需要平台級成交資料，本站沒有，所以前端據實標為
+    「你最常查的卡」。至少查過 2 次才列入，單次查詢算不出漲跌。
+    """
+    game = request.args.get("game", "pkm")
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT card_id, rarity, lang, COUNT(*) AS n,"
+        " (SELECT price FROM price_history q WHERE q.game=p.game"
+        "   AND q.card_id=p.card_id AND IFNULL(q.rarity,'')=IFNULL(p.rarity,'')"
+        "   AND IFNULL(q.lang,'')=IFNULL(p.lang,'')"
+        "   AND q.ts >= datetime('now','localtime','-30 days')"
+        "   ORDER BY q.ts ASC LIMIT 1) AS first_price,"
+        " (SELECT price FROM price_history q WHERE q.game=p.game"
+        "   AND q.card_id=p.card_id AND IFNULL(q.rarity,'')=IFNULL(p.rarity,'')"
+        "   AND IFNULL(q.lang,'')=IFNULL(p.lang,'')"
+        "   AND q.ts >= datetime('now','localtime','-30 days')"
+        "   ORDER BY q.ts DESC LIMIT 1) AS last_price"
+        " FROM price_history p WHERE p.game=?"
+        " AND p.ts >= datetime('now','localtime','-30 days')"
+        " GROUP BY p.card_id, IFNULL(p.rarity,''), IFNULL(p.lang,'')"
+        " HAVING n >= 2 ORDER BY n DESC, last_price DESC LIMIT 12",
+        (game,)).fetchall()
+    out = []
+    for r in rows:
+        name, image = _card_snapshot(conn, game, str(r["card_id"]))
+        if name is None:
+            continue  # 卡片已不在資料庫（換過資料來源）就略過
+        first, last = r["first_price"], r["last_price"]
+        change = round((last - first) / first * 100) if first else None
+        out.append({
+            "game": game, "card_id": str(r["card_id"]), "name": name,
+            "image_url": image, "rarity": r["rarity"], "lang": r["lang"],
+            "samples": r["n"], "first_price": first, "last_price": last,
+            "change_pct": change,
+        })
+    conn.close()
+    return jsonify({"cards": out})
 
 
 # ==================== 我的牌組 ====================
