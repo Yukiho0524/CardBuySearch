@@ -17,7 +17,7 @@ from db import get_conn
 from ruten import (GUNDAM_LANGS, YGO_LANGS, YGO_RARITIES, drop_price_outliers,
                    expand_variants, find_listings_for_card,
                    find_listings_for_ga, find_listings_for_gundam,
-                   find_listings_for_ygo, resolve_seller)
+                   find_listings_for_ygo, liquidity, resolve_seller)
 
 app = Flask(__name__, static_folder="static", static_url_path="")
 # 本機自用：靜態檔（HTML/JS/CSS）不讓瀏覽器快取，改版即生效，
@@ -245,6 +245,33 @@ def ga_card_dict(r):
     }
 
 
+def _attach_prices(conn, game, cards):
+    """把 price_history 最近一次的最低價掛到卡片上，供一覽/搜尋顯示「$X 起」。
+
+    只是歷史快照，不即時查露天（一頁 60 張要查 60 次露天不可行）。
+    沒比價過的卡就是沒有價格，據實留空不推估——比照收藏市值的處理。
+    一次批次查完整頁，避免 N+1。
+    """
+    if not cards:
+        return cards
+    ids = [str(c["id"]) for c in cards]
+    ph = ",".join("?" * len(ids))
+    rows = conn.execute(
+        "SELECT card_id, price, ts FROM ("
+        " SELECT card_id, price, ts, ROW_NUMBER() OVER ("
+        "   PARTITION BY card_id ORDER BY ts DESC) AS rn"
+        f"  FROM price_history WHERE game=? AND card_id IN ({ph})"
+        ") WHERE rn=1", [game] + ids).fetchall()
+    # card_id 欄位是 INTEGER 親和：數字卡號存進去會變 int，字串卡號（GD01-001）維持字串，
+    # 兩邊都轉字串再對，才不會 pkm 對得到、gcg 對不到
+    by_id = {str(r["card_id"]): r for r in rows}
+    for c in cards:
+        r = by_id.get(str(c["id"]))
+        c["last_price"] = r["price"] if r else None
+        c["last_price_ts"] = r["ts"][:10] if r else None
+    return cards
+
+
 @app.get("/api/search")
 def api_search():
     """卡片搜尋：game＝pkm/ygo，q＝卡名或編號，rarity＝稀有度過濾（僅寶可夢）。"""
@@ -283,6 +310,7 @@ def api_search():
         for r in cards:
             r["image_url"] = f"/img/pkm/{r['id']}"
             r["game"] = "pkm"
+    _attach_prices(conn, game, cards)
     conn.close()
     return jsonify({"cards": cards})
 
@@ -577,6 +605,7 @@ def api_browse():
             params + [offset]).fetchall()
         cards = [{**dict(r), "game": "pkm", "image_url": f"/img/pkm/{r['id']}"}
                  for r in rows]
+    _attach_prices(conn, game, cards)
     conn.close()
     return jsonify({"total": total, "offset": offset, "cards": cards})
 
@@ -795,7 +824,8 @@ def api_card_detail(game, card_id):
 def api_cards():
     """批次取卡片資料（分享連結還原用）。?game=ygo&ids=1,2,3"""
     game = request.args.get("game", "pkm")
-    raw_ids = [x for x in (request.args.get("ids") or "").split(",") if x][:40]
+    # 上限 200：載入牌組時一次要還原整份清單（遊戲王主+額外可破 40 種）
+    raw_ids = [x for x in (request.args.get("ids") or "").split(",") if x][:200]
     conn = get_conn()
     cards = []
     if game == "gcg":  # 鋼彈卡號是字串
@@ -1192,20 +1222,26 @@ def api_compare():
             listings.sort(
                 key=lambda l: (CONFIDENCE_ORDER[l["confidence"]], l["price"]))
             _cache_put(cache_key, listings)
-            if listings:  # 累積價格快照（快取命中不重複記錄）
+            if listings:  # 累積價格＋流動性快照（快取命中不重複記錄）
+                n, stock, sold = liquidity(listings)
                 hist_conn = get_conn()
                 hist_conn.execute(
-                    "INSERT INTO price_history (game, card_id, rarity, lang, price) "
-                    "VALUES (?,?,?,?,?)",
+                    "INSERT INTO price_history "
+                    "(game, card_id, rarity, lang, price, listings, stock, sold) "
+                    "VALUES (?,?,?,?,?,?,?,?)",
                     (w["game"], w["card_id"], w["rarity"], w["lang"],
-                     min(l["price"] for l in listings)))
+                     min(l["price"] for l in listings), n, stock, sold))
                 hist_conn.commit()
                 hist_conn.close()
         per_card_listings[w["key"]] = listings
-        # 本次查詢的行情區間（給前端上色/顯示）
+        # 本次查詢的行情區間＋流動性（給前端上色/顯示）
         prices = [l["price"] for l in listings]
-        w["market"] = ({"low": min(prices), "high": max(prices), "n": len(prices)}
-                       if prices else None)
+        if prices:
+            _, stock, sold = liquidity(listings)
+            w["market"] = {"low": min(prices), "high": max(prices),
+                           "n": len(prices), "stock": stock, "sold": sold}
+        else:
+            w["market"] = None
 
     sellers = defaultdict(dict)  # seller_id -> {want_key: best_listing}
     for key, listings in per_card_listings.items():
@@ -1830,6 +1866,167 @@ def api_collection_deduct():
             "owned": owned, "remaining": want - owned, "matched": used,
         })
     return jsonify({"items": out, "summary": {"kinds": kinds, "qty": total}})
+
+
+# ==================== 我的牌組 ====================
+#
+# 原本「匯入牌組」是一次性的：匯完就散成願望清單，牌組本身沒留下。
+# 存起來之後才能「我有三套牌，切換看各自缺什麼」。
+# items 用與分享連結相同的精簡格式，前端載入時走既有的 /api/cards 還原路徑。
+
+DECK_NAME_MAX = 40
+DECK_ITEMS_MAX = 300  # 一份牌組的卡種上限（防止塞爆 DB）
+
+
+def _deck_items(raw):
+    """驗證並正規化 items：只留必要欄位，數量夾在 1..99。"""
+    out = []
+    for it in (raw or [])[:DECK_ITEMS_MAX]:
+        if not isinstance(it, dict):
+            continue
+        game, cid = it.get("g"), str(it.get("id") or "").strip()
+        if game not in ("pkm", "ygo", "gcg", "ga") or not cid:
+            continue
+        try:
+            q = min(99, max(1, int(it.get("q") or 1)))
+        except (TypeError, ValueError):
+            q = 1
+        entry = {"g": game, "id": cid, "q": q}
+        for k in ("r", "l", "a"):
+            if it.get(k):
+                entry[k] = str(it[k])[:20]
+        out.append(entry)
+    return out
+
+
+def _deck_row(r):
+    """DB 列 → 前端要的摘要（不含完整 items，清單頁不需要）。"""
+    try:
+        items = json.loads(r["items"])
+    except ValueError:
+        items = []
+    return {
+        "id": r["id"], "name": r["name"], "game": r["game"],
+        "kinds": len(items), "qty": sum(i.get("q", 1) for i in items),
+        "updated_at": r["updated_at"],
+    }
+
+
+def _deck_main_game(items):
+    """混牌組時取張數最多的遊戲當標籤（只供顯示，不影響功能）。"""
+    tally = {}
+    for i in items:
+        tally[i["g"]] = tally.get(i["g"], 0) + i.get("q", 1)
+    return max(tally, key=tally.get) if tally else None
+
+
+@app.get("/api/decks")
+def api_decks_list():
+    cid = _client_id()
+    if not cid:
+        return jsonify({"decks": []})
+    conn = get_conn()
+    decks = [_deck_row(r) for r in conn.execute(
+        "SELECT * FROM decks WHERE client_id=? ORDER BY updated_at DESC", (cid,))]
+    conn.close()
+    return jsonify({"decks": decks})
+
+
+@app.get("/api/decks/<int:deck_id>")
+def api_deck_get(deck_id):
+    """取牌組內容（精簡格式）；卡片資料由前端走 /api/cards 還原。"""
+    cid = _client_id()
+    conn = get_conn()
+    r = conn.execute("SELECT * FROM decks WHERE id=? AND client_id=?",
+                     (deck_id, cid)).fetchone()
+    conn.close()
+    if not r:
+        return jsonify({"error": "找不到牌組"}), 404
+    try:
+        items = json.loads(r["items"])
+    except ValueError:
+        items = []
+    return jsonify({"id": r["id"], "name": r["name"], "items": items})
+
+
+@app.post("/api/decks")
+def api_deck_create():
+    """存成牌組：{name, items:[{g,id,q,r?,l?,a?}]}。同名視為覆蓋。"""
+    cid = _client_id()
+    if not cid:
+        return jsonify({"error": "缺少訪客識別"}), 400
+    p = request.get_json(force=True)
+    name = (p.get("name") or "").strip()[:DECK_NAME_MAX]
+    if not name:
+        return jsonify({"error": "請輸入牌組名稱"}), 400
+    items = _deck_items(p.get("items"))
+    if not items:
+        return jsonify({"error": "牌組是空的"}), 400
+    conn = get_conn()
+    blob, game = json.dumps(items, ensure_ascii=False), _deck_main_game(items)
+    old = conn.execute("SELECT id FROM decks WHERE client_id=? AND name=?",
+                       (cid, name)).fetchone()
+    if old:
+        conn.execute(
+            "UPDATE decks SET items=?, game=?, "
+            "updated_at=datetime('now','localtime') WHERE id=?",
+            (blob, game, old["id"]))
+        deck_id = old["id"]
+    else:
+        cur = conn.execute(
+            "INSERT INTO decks (client_id, name, game, items) VALUES (?,?,?,?)",
+            (cid, name, game, blob))
+        deck_id = cur.lastrowid
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True, "id": deck_id, "overwritten": bool(old)})
+
+
+@app.post("/api/decks/<int:deck_id>")
+def api_deck_update(deck_id):
+    """改名或覆寫內容。"""
+    cid = _client_id()
+    p = request.get_json(force=True)
+    conn = get_conn()
+    r = conn.execute("SELECT id FROM decks WHERE id=? AND client_id=?",
+                     (deck_id, cid)).fetchone()
+    if not r:
+        conn.close()
+        return jsonify({"error": "找不到牌組"}), 404
+    sets, params = [], []
+    if "name" in p:
+        name = (p.get("name") or "").strip()[:DECK_NAME_MAX]
+        if not name:
+            conn.close()
+            return jsonify({"error": "牌組名稱不可空白"}), 400
+        sets.append("name=?")
+        params.append(name)
+    if "items" in p:
+        items = _deck_items(p.get("items"))
+        if not items:
+            conn.close()
+            return jsonify({"error": "牌組是空的"}), 400
+        sets += ["items=?", "game=?"]
+        params += [json.dumps(items, ensure_ascii=False), _deck_main_game(items)]
+    if not sets:
+        conn.close()
+        return jsonify({"error": "無可更新欄位"}), 400
+    sets.append("updated_at=datetime('now','localtime')")
+    conn.execute(f"UPDATE decks SET {','.join(sets)} WHERE id=? AND client_id=?",
+                 params + [deck_id, cid])
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/decks/<int:deck_id>")
+def api_deck_delete(deck_id):
+    cid = _client_id()
+    conn = get_conn()
+    conn.execute("DELETE FROM decks WHERE id=? AND client_id=?", (deck_id, cid))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
 
 
 if __name__ == "__main__":

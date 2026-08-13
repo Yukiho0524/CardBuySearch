@@ -52,6 +52,22 @@
         <button id="importBtn">匯入</button>
         <p id="importResult" class="import-hint"></p>
       </details>
+      <details class="import-box deck-box">
+        <summary>🗂️ 我的牌組 <span id="deckCount" class="badge">0</span></summary>
+        <p class="import-hint">把目前的願望清單存成牌組，之後一鍵載回。
+          存了多套牌就能切換看各自缺什麼。</p>
+        <div class="deck-row">
+          <select id="deckSelect"><option value="">（尚無牌組）</option></select>
+          <button id="deckLoad" disabled>載入</button>
+          <button id="deckDelete" disabled title="刪除選取的牌組">刪除</button>
+        </div>
+        <div class="deck-row">
+          <input id="deckName" type="text" maxlength="40" autocomplete="off"
+                 placeholder="牌組名稱（同名會覆蓋）">
+          <button id="deckSave">💾 存成牌組</button>
+        </div>
+        <p id="deckResult" class="import-hint"></p>
+      </details>
       <ul id="wishlist" class="wishlist"></ul>
       <button id="compareBtn" class="primary" disabled>🔍 尋找能湊齊的賣家</button>
       <button id="deductBtn" class="share-btn" disabled

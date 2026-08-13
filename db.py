@@ -164,6 +164,20 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_collections_uniq ON collections(
     IFNULL(rarity, ''), IFNULL(lang, ''), IFNULL(art, ''));
 CREATE INDEX IF NOT EXISTS idx_collections_client ON collections(client_id);
 
+-- 我的牌組：把當下的願望清單存起來，之後一鍵載回。
+-- items 存 JSON（與分享連結同一套精簡格式 [{g,id,q,r,l,a}]），刻意不拆成
+-- deck_cards 子表——這個站的規模用不到關聯查詢，一欄 JSON 少一半程式碼。
+CREATE TABLE IF NOT EXISTS decks (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id  TEXT NOT NULL,
+    name       TEXT NOT NULL,
+    game       TEXT,                   -- 主要遊戲（混牌組時取張數最多者，僅供顯示）
+    items      TEXT NOT NULL,          -- JSON 陣列
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+CREATE INDEX IF NOT EXISTS idx_decks_client ON decks(client_id);
+
 -- 應用設定（鍵值，如 Discord Webhook 網址）
 CREATE TABLE IF NOT EXISTS app_settings (
     key   TEXT PRIMARY KEY,
@@ -215,6 +229,11 @@ def _ensure_schema(conn):
         ("gundam_cards", "effect", "TEXT"),  # 鋼彈效果文字
         ("price_alerts", "client_id", "TEXT"),  # 舊庫補：訪客識別
         ("ga_cards", "set_release", "TEXT"),    # GA 系列發售日（排序用）
+        # 流動性快照（露天 API 本來就回 SoldQty/StockQty，之前只是沒存）：
+        # 用來判斷「這個價位是真的便宜，還是根本沒人買」
+        ("price_history", "listings", "INTEGER"),  # 當次符合的商品數
+        ("price_history", "stock", "INTEGER"),     # 這些商品的在售總量
+        ("price_history", "sold", "INTEGER"),      # 這些商品的累計成交量
     ):
         try:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {typ}")

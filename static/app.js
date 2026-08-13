@@ -269,6 +269,9 @@ function cardEl(c) {
         <span class="name">${esc(c.name) || "（未知）"}</span>
         <span class="sub">${esc(sub)}</span>
         ${c.rarity ? `<span class="rarity-tag">${esc(c.rarity)}</span>` : ""}
+        ${c.last_price != null
+          ? `<span class="price-tag" title="比價時記錄的最低價（${c.last_price_ts}），非即時">${fmt(c.last_price)} 起</span>`
+          : ""}
       </div>
     </div>
     <div class="card-btns">
@@ -577,6 +580,34 @@ $("#importBtn").addEventListener("click", async () => {
 });
 
 // ---------- 願望清單持久化與分享 ----------
+// 清單的精簡表示法（分享連結與存牌組共用同一套格式，避免兩邊各寫一份）
+function wishlistCompact() {
+  return [...wishlist.values()].map((it) => ({
+    g: it.card.game, id: it.card.id, q: it.qty,
+    r: it.rarity || undefined, l: it.lang || undefined, a: it.art || undefined,
+  }));
+}
+
+// 精簡表示法 → 願望清單（向後端補齊卡片資料）。分享連結與載入牌組共用。
+async function hydrateIntoWishlist(items) {
+  const byGame = {};
+  for (const it of items) (byGame[it.g] = byGame[it.g] || []).push(it);
+  await Promise.all(Object.entries(byGame).map(async ([game, its]) => {
+    const res = await fetch(`/api/cards?game=${game}&ids=${its.map((i) => i.id).join(",")}`);
+    const data = await res.json();
+    const cardById = {};
+    for (const c of data.cards) cardById[c.id] = c;
+    for (const it of its) {
+      const c = cardById[it.id];
+      if (!c) continue;  // 卡片已不在資料庫（例如換過資料來源）就略過
+      wishlist.set(keyOf(c), { card: c, qty: it.q || 1, rarity: it.r || "",
+                               lang: it.l || "", art: it.a || "", cardRarities: null });
+      if (c.game === "ygo") loadCardRarities(keyOf(c), c.id);
+    }
+  }));
+  renderWishlist();
+}
+
 function saveWishlist() {
   const data = [...wishlist.values()].map((it) => ({
     card: it.card, qty: it.qty, rarity: it.rarity, lang: it.lang, art: it.art,
@@ -590,22 +621,7 @@ function restoreWishlist() {
   if (hash) {
     try {
       const b64 = hash[1].replace(/-/g, "+").replace(/_/g, "/");
-      const items = JSON.parse(decodeURIComponent(escape(atob(b64))));
-      const byGame = {};
-      for (const it of items) (byGame[it.g] = byGame[it.g] || []).push(it);
-      Promise.all(Object.entries(byGame).map(async ([game, its]) => {
-        const res = await fetch(`/api/cards?game=${game}&ids=${its.map((i) => i.id).join(",")}`);
-        const data = await res.json();
-        const cardById = {};
-        for (const c of data.cards) cardById[c.id] = c;
-        for (const it of its) {
-          const c = cardById[it.id];
-          if (!c) continue;
-          wishlist.set(keyOf(c), { card: c, qty: it.q || 1, rarity: it.r || "",
-                                   lang: it.l || "", art: it.a || "", cardRarities: null });
-          if (c.game === "ygo") loadCardRarities(keyOf(c), c.id);
-        }
-      })).then(() => renderWishlist());
+      hydrateIntoWishlist(JSON.parse(decodeURIComponent(escape(atob(b64)))));
       history.replaceState(null, "", location.pathname);
       return;
     } catch (e) { /* 連結壞了就走 localStorage */ }
@@ -647,10 +663,7 @@ async function refreshWishlistCards(stored) {
 
 $("#shareBtn").addEventListener("click", () => {
   if (!wishlist.size) return;
-  const compact = [...wishlist.values()].map((it) => ({
-    g: it.card.game, id: it.card.id, q: it.qty,
-    r: it.rarity || undefined, l: it.lang || undefined, a: it.art || undefined,
-  }));
+  const compact = wishlistCompact();
   // unescape/escape 包一層讓 btoa 支援中文（如「日紙」）
   const url = `${location.origin}${location.pathname}#list=${btoa(unescape(encodeURIComponent(JSON.stringify(compact))))}`;
   navigator.clipboard.writeText(url).then(
@@ -827,10 +840,26 @@ function creditNote(s) {
   return `<span class="credit">★${s.credit_rate}${cnt ? "（" + cnt + "）" : ""}</span>`;
 }
 
+// 流動性：在售量與累計成交量。用來分辨「便宜」與「沒人買」——
+// 成交量是賣場商品的累計值，只看相對熱度，別當成本期成交筆數。
+function liquidityNote(market) {
+  if (!market || !market.n) return "";
+  const parts = [];
+  if (market.stock) parts.push(`在售 ${market.stock} 張`);
+  if (market.sold) parts.push(`累計成交 ${market.sold}`);
+  if (!parts.length) return "";
+  const cold = market.n <= 2 && !market.sold;  // 貨少又沒成交紀錄＝這價位參考性低
+  return `<small class="mkt liq${cold ? " cold" : ""}"` +
+    `${cold ? ' title="在售商品少且無成交紀錄，這個價位參考性較低"' : ""}>` +
+    `${parts.join("・")}${cold ? " ⚠" : ""}</small>`;
+}
+
 function marketNote(market) {
   if (!market || !market.n) return "";
-  if (market.low === market.high) return `<small class="mkt">行情 ${fmt(market.low)}（${market.n} 筆）</small>`;
-  return `<small class="mkt">行情 ${fmt(market.low)}～${fmt(market.high)}（${market.n} 筆）</small>`;
+  const range = market.low === market.high
+    ? `行情 ${fmt(market.low)}（${market.n} 筆）`
+    : `行情 ${fmt(market.low)}～${fmt(market.high)}（${market.n} 筆）`;
+  return `<small class="mkt">${range}</small>` + liquidityNote(market);
 }
 
 function renderCompare(data) {
@@ -1363,3 +1392,90 @@ $("#deductBtn").addEventListener("click", async () => {
 });
 
 loadCollection();
+
+// ---------- 我的牌組 ----------
+// 原本匯入牌組是一次性的（匯完就散成清單）。存起來才能切換多套牌各自比價。
+let decks = [];
+
+async function loadDecks() {
+  try {
+    const res = await alertFetch("/api/decks");
+    decks = (await res.json()).decks || [];
+  } catch (e) { return; }
+  const sel = $("#deckSelect");
+  const keep = sel.value;
+  sel.innerHTML = decks.length
+    ? decks.map((d) =>
+        `<option value="${d.id}">${esc(d.name)}（${GAME_LABEL[d.game] || "混"}・${d.kinds} 種 ${d.qty} 張）</option>`
+      ).join("")
+    : '<option value="">（尚無牌組）</option>';
+  if (keep && decks.some((d) => String(d.id) === keep)) sel.value = keep;
+  $("#deckCount").textContent = decks.length;
+  const none = !decks.length;
+  $("#deckLoad").disabled = none;
+  $("#deckDelete").disabled = none;
+}
+
+$("#deckSave").addEventListener("click", async () => {
+  const out = $("#deckResult");
+  if (!wishlist.size) { out.textContent = "願望清單是空的，沒東西可存。"; return; }
+  const name = $("#deckName").value.trim();
+  if (!name) { out.textContent = "請先輸入牌組名稱。"; return; }
+  try {
+    const res = await alertFetch("/api/decks", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, items: wishlistCompact() }),
+    });
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    $("#deckName").value = "";
+    await loadDecks();
+    $("#deckSelect").value = String(data.id);
+    out.textContent = data.overwritten
+      ? `已覆蓋牌組「${name}」。` : `已存成牌組「${name}」。`;
+  } catch (err) { out.textContent = "儲存失敗：" + err.message; }
+});
+
+$("#deckLoad").addEventListener("click", async () => {
+  const id = $("#deckSelect").value;
+  const out = $("#deckResult");
+  if (!id) return;
+  // 會蓋掉目前清單，先問——清單可能是剛整理好的
+  if (wishlist.size &&
+      !confirm(`載入牌組會取代目前的願望清單（${wishlist.size} 種卡）。要繼續嗎？`)) {
+    out.textContent = "已取消。";
+    return;
+  }
+  out.textContent = "載入中…";
+  try {
+    const res = await alertFetch(`/api/decks/${id}`);
+    const data = await res.json();
+    if (data.error) throw new Error(data.error);
+    wishlist.clear();
+    await hydrateIntoWishlist(data.items);
+    // 結果區的「已加入」狀態要跟著新清單重算
+    document.querySelectorAll(".card-item").forEach((el) => {
+      const b = el.querySelector("button.add");
+      if (!b) return;
+      const inList = wishlist.has(el.dataset.key);
+      b.disabled = inList;
+      b.textContent = inList ? "已加入" : "＋ 加入清單";
+    });
+    const miss = data.items.length - wishlist.size;
+    out.textContent = `已載入「${data.name}」${wishlist.size} 種卡` +
+      (miss > 0 ? `（${miss} 種在資料庫中已找不到，略過）` : "");
+  } catch (err) { out.textContent = "載入失敗：" + err.message; }
+});
+
+$("#deckDelete").addEventListener("click", async () => {
+  const id = $("#deckSelect").value;
+  if (!id) return;
+  const d = decks.find((x) => String(x.id) === id);
+  if (!confirm(`確定刪除牌組「${d ? d.name : id}」？`)) return;
+  await alertFetch(`/api/decks/${id}`, { method: "DELETE" });
+  await loadDecks();
+  $("#deckResult").textContent = "已刪除。";
+});
+
+loadDecks();

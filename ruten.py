@@ -635,6 +635,19 @@ def drop_price_outliers(listings, rel_floor=0.1, min_n=4):
     return [l for l in listings if l["price"] >= floor]
 
 
+def liquidity(listings):
+    """把一批商品彙總成流動性指標：(商品數, 在售總量, 累計成交量)。
+
+    露天 prod API 本來就回 StockQty/SoldQty，之前只用來過濾缺貨商品。
+    存進 price_history 後就能回答「$50 是真的便宜，還是這卡根本沒人買」。
+    成交量是賣場商品的**累計**值（非本期增量），只適合看相對熱度。
+    """
+    n = len(listings)
+    stock = sum(l.get("stock") or 0 for l in listings)
+    sold = sum(l.get("sold") or 0 for l in listings)
+    return n, stock, sold
+
+
 def _listing_dict(p, confidence):
     price_range = p.get("PriceRange") or [None, None]
     return {

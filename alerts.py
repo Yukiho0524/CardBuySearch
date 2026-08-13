@@ -10,7 +10,7 @@ from db import get_conn
 from notify import send_alert
 from ruten import (drop_price_outliers, find_listings_for_card,
                    find_listings_for_ga, find_listings_for_gundam,
-                   find_listings_for_ygo)
+                   find_listings_for_ygo, liquidity)
 
 # 只採信標題明確對應的商品（strong/weak），排除 maybe——maybe 代表標題
 # 沒標稀有度/紙種，可能是別的版本，拿來觸發通知容易誤報。
@@ -92,12 +92,15 @@ def check_alert(conn, a, webhook):
     low = listings[0] if listings else None
     min_price = low["price"] if low else None
 
-    if min_price is not None:  # 順便累積價格歷史（與比價共用同一張表）
+    if min_price is not None:  # 順便累積價格＋流動性歷史（與比價共用同一張表）
         try:
+            n, stock, sold = liquidity(listings)
             conn.execute(
-                "INSERT INTO price_history (game, card_id, rarity, lang, price) "
-                "VALUES (?,?,?,?,?)",
-                (a["game"], a["card_id"], a["rarity"], a["lang"], min_price))
+                "INSERT INTO price_history "
+                "(game, card_id, rarity, lang, price, listings, stock, sold) "
+                "VALUES (?,?,?,?,?,?,?,?)",
+                (a["game"], a["card_id"], a["rarity"], a["lang"], min_price,
+                 n, stock, sold))
         except Exception:
             pass
 

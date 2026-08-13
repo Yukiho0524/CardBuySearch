@@ -175,6 +175,11 @@ body {
   display: inline-block; padding: 0 6px; border-radius: 4px;
   background: #ffe9b8; color: #7a4c00; font-size: .72rem; font-weight: 700;
 }
+/* 一覽/搜尋的「$X 起」：來自 price_history 快照，沒查過的卡不顯示 */
+.price-tag {
+  display: block; margin-top: 2px; font-size: .75rem; font-weight: 700;
+  color: var(--link);
+}
 
 .import-box { margin-bottom: 10px; font-size: .85rem; }
 .import-box summary { cursor: pointer; color: var(--link); }
@@ -188,6 +193,19 @@ body {
   background: var(--btn-ink); color: #fff; cursor: pointer;
 }
 .import-hint { color: var(--muted); font-size: .78rem; margin: 4px 0; }
+
+.deck-box summary { display: flex; align-items: center; gap: 6px; }
+.deck-row { display: flex; gap: 6px; margin: 6px 0; }
+.deck-row select, .deck-row input {
+  flex: 1; min-width: 0; padding: 5px 6px; font-size: .82rem;
+  border: 1px solid var(--border); border-radius: 6px;
+  background: var(--input-bg); color: var(--ink);
+}
+.deck-row button {
+  flex-shrink: 0; padding: 5px 12px; border: none; border-radius: 6px;
+  background: var(--btn-ink); color: #fff; cursor: pointer; font-size: .82rem;
+}
+.deck-row button:disabled { background: #bbb; cursor: default; }
 
 .wishlist { list-style: none; margin-bottom: 12px; }
 .wishlist li {
@@ -297,6 +315,10 @@ button.primary:not(:disabled):hover { background: var(--accent-dark); }
 }
 .diff-note { color: var(--muted); font-size: .78rem; }
 .mkt { color: var(--muted); white-space: nowrap; }
+/* 流動性另起一行，避免與行情擠在同一列 */
+.mkt.liq { display: block; font-size: .72rem; }
+.mkt.liq.cold { color: #b26a00; }
+html[data-theme="dark"] .mkt.liq.cold { color: #e0a458; }
 .spark { vertical-align: -4px; margin-left: 4px; }
 .credit { color: var(--warn); font-size: .78rem; }
 
