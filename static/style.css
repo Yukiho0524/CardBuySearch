@@ -153,7 +153,11 @@ body {
   display: flex; flex-direction: column;  /* 按鈕釘底：同列卡名長短不一也對齊 */
 }
 .card-item .card-click { flex: 1; }
-.card-item > button { margin-top: auto; }
+/* 按鈕列釘底（加入清單＋收藏並排） */
+.card-item > .card-btns { margin-top: auto; display: flex; }
+.card-item .card-btns .add { flex: 1; }
+.card-item .card-btns .coll { width: 34px; flex-shrink: 0; background: var(--btn-ink); }
+.card-item .card-btns .coll:hover { filter: brightness(1.15); background: var(--btn-ink); }
 .card-item img { width: 100%; aspect-ratio: 63/88; object-fit: contain; background: var(--img-bg); }
 .card-click { cursor: zoom-in; }
 .card-click:hover img { filter: brightness(1.06); }
@@ -205,6 +209,41 @@ body {
 .wishlist .bell { background: none; border: none; cursor: pointer; font-size: 1rem;
   line-height: 1; padding: 2px 4px; flex-shrink: 0; opacity: .7; }
 .wishlist .bell:hover { opacity: 1; }
+.wishlist .got { background: none; border: none; cursor: pointer; font-size: 1rem;
+  line-height: 1; padding: 2px 4px; flex-shrink: 0; opacity: .7; }
+.wishlist .got:hover { opacity: 1; }
+.wishlist .got:disabled { opacity: .3; cursor: default; }
+
+/* ---------- 我的收藏 ---------- */
+/* 版面沿用願望清單那一套（同樣是「卡圖＋資訊＋數量」的列表） */
+.collection-list { list-style: none; }
+.collection-list li {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 0; border-bottom: 1px dashed var(--border); font-size: .85rem;
+}
+.collection-list img { width: 46px; border-radius: 3px; flex-shrink: 0; }
+.collection-list .winfo { flex: 1; min-width: 0; }
+.collection-list .wtop { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+.collection-list .wname { flex: 1; min-width: 0; }
+.collection-list .qty { width: 48px; padding: 3px; border: 1px solid var(--border);
+  border-radius: 5px; background: var(--input-bg); color: var(--ink); flex-shrink: 0; }
+.collection-list .rm { background: none; border: none; color: var(--muted);
+  cursor: pointer; font-size: 1.1rem; line-height: 1; padding: 2px 4px; flex-shrink: 0; }
+.collection-list .rm:hover { color: var(--accent); }
+.coll-money { display: flex; align-items: center; flex-wrap: wrap; gap: 10px;
+  margin-top: 5px; font-size: .78rem; color: var(--muted); }
+.coll-money input.cost { width: 70px; padding: 2px 4px; border: 1px solid var(--border);
+  border-radius: 5px; background: var(--input-bg); color: var(--ink); font-size: .78rem; }
+.coll-gain { font-weight: 700; }
+.coll-gain.up { color: #d33; }    /* 台股慣例：漲紅跌綠 */
+.coll-gain.down { color: #187d4e; }
+/* 深色底上這兩色對比不足，調亮 */
+html[data-theme="dark"] .coll-gain.up { color: #ff6b6b; }
+html[data-theme="dark"] .coll-gain.down { color: #3ecf8e; }
+.coll-summary { display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+  padding: 10px 12px; margin-bottom: 12px; border-radius: 8px;
+  background: var(--panel-sub); font-size: .85rem; }
+.coll-summary small { color: var(--muted); font-size: .75rem; flex-basis: 100%; }
 .badge {
   background: var(--accent); color: #fff; border-radius: 999px;
   font-size: .75rem; padding: 1px 9px; vertical-align: middle;

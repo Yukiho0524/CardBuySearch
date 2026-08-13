@@ -54,7 +54,10 @@
       </details>
       <ul id="wishlist" class="wishlist"></ul>
       <button id="compareBtn" class="primary" disabled>🔍 尋找能湊齊的賣家</button>
+      <button id="deductBtn" class="share-btn" disabled
+              title="扣掉「我的收藏」裡已經有的張數，只留真正缺的">➖ 扣除已收藏</button>
       <button id="shareBtn" class="share-btn">🔗 分享清單</button>
+      <p id="deductResult" class="import-hint"></p>
     </section>
   </main>
 
@@ -62,6 +65,15 @@
     <h2>3️⃣ 比價結果</h2>
     <div id="compareStatus"></div>
     <div id="compareResults"></div>
+  </section>
+
+  <section id="collectionSection" class="panel collection-panel">
+    <h2>📦 我的收藏 <span id="collCount" class="badge">0</span></h2>
+    <p class="import-hint">記錄你<b>已經有的卡</b>。搜尋結果或卡片詳情按「📦 收藏」即可加入；
+      之後匯入牌組時按<b>➖ 扣除已收藏</b>，就只會把真正缺的送去比價。
+      填了購入單價還能對照目前行情看損益。</p>
+    <div id="collSummary" class="coll-summary" hidden></div>
+    <ul id="collectionList" class="collection-list"></ul>
   </section>
 
   <section id="alertSection" class="panel alert-panel">

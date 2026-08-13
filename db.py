@@ -138,6 +138,32 @@ CREATE TABLE IF NOT EXISTS price_history (
 );
 CREATE INDEX IF NOT EXISTS idx_price_hist ON price_history(game, card_id);
 
+-- 收藏庫存：使用者「已經有的卡」，與願望清單（我還缺什麼）互補。
+-- 主要用途是匯入牌組後扣掉已收藏的數量，只把真正缺的送去比價。
+-- unit_price 為購入單價（可空），搭配 price_history 現價可算收藏市值與損益。
+-- card_id 存為 TEXT 以相容鋼彈/GA 的字串卡號（比照 price_alerts）。
+CREATE TABLE IF NOT EXISTS collections (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    client_id  TEXT NOT NULL,          -- 訪客識別（同 price_alerts）
+    game       TEXT NOT NULL,          -- pkm / ygo / gcg / ga
+    card_id    TEXT NOT NULL,
+    card_name  TEXT,                   -- 顯示用快照
+    image_url  TEXT,                   -- 顯示用快照（站內相對路徑）
+    rarity     TEXT,                   -- 版本條件，語意同願望清單
+    lang       TEXT,
+    art        TEXT,
+    qty        INTEGER NOT NULL DEFAULT 1,
+    unit_price INTEGER,                -- 購入單價（可空＝沒記成本）
+    note       TEXT,
+    created_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now', 'localtime'))
+);
+-- 同一張卡的不同版本（稀有度/紙種/異圖）各自一列，故唯一鍵含這三個條件
+CREATE UNIQUE INDEX IF NOT EXISTS idx_collections_uniq ON collections(
+    client_id, game, card_id,
+    IFNULL(rarity, ''), IFNULL(lang, ''), IFNULL(art, ''));
+CREATE INDEX IF NOT EXISTS idx_collections_client ON collections(client_id);
+
 -- 應用設定（鍵值，如 Discord Webhook 網址）
 CREATE TABLE IF NOT EXISTS app_settings (
     key   TEXT PRIMARY KEY,

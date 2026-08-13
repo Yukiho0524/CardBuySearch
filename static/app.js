@@ -271,15 +271,30 @@ function cardEl(c) {
         ${c.rarity ? `<span class="rarity-tag">${esc(c.rarity)}</span>` : ""}
       </div>
     </div>
-    <button ${inList ? "disabled" : ""}>${inList ? "已加入" : "＋ 加入清單"}</button>`;
+    <div class="card-btns">
+      <button class="add" ${inList ? "disabled" : ""}>${inList ? "已加入" : "＋ 加入清單"}</button>
+      <button class="coll" title="我已經有這張卡，加入收藏">📦</button>
+    </div>`;
   div.querySelector(".card-click").addEventListener("click", () =>
     openCardModal(c.game, c.id));
-  div.querySelector("button").addEventListener("click", (e) => {
+  div.querySelector("button.add").addEventListener("click", (e) => {
     wishlist.set(keyOf(c), newWishItem(c));
     e.target.disabled = true;
     e.target.textContent = "已加入";
     renderWishlist();
     if (c.game === "ygo") loadCardRarities(keyOf(c), c.id);
+  });
+  div.querySelector("button.coll").addEventListener("click", async (e) => {
+    const btn = e.currentTarget;
+    btn.disabled = true;
+    try {
+      await addToCollection(c);
+      btn.textContent = "✓";
+      setTimeout(() => { btn.textContent = "📦"; btn.disabled = false; }, 1200);
+    } catch (err) {
+      alert("加入收藏失敗：" + err.message);
+      btn.disabled = false;
+    }
   });
   return div;
 }
@@ -361,6 +376,7 @@ function gcgDetailHtml(d) {
       <ul class="variant-list" style="max-height:200px;overflow-y:auto">${variants}</ul></div>` : ""}
     <div class="modal-actions">
       <button class="add">＋ 加入願望清單</button>
+      <button class="coll" title="我已經有這張卡，加入收藏">📦 收藏</button>
       <a class="official" href="${esc(d.official_url)}" target="_blank" rel="noopener">官方卡表</a>
     </div>`;
 }
@@ -401,6 +417,7 @@ function gaDetailHtml(d) {
       <ul class="variant-list" style="max-height:200px;overflow-y:auto">${variants}</ul></div>` : ""}
     <div class="modal-actions">
       <button class="add">＋ 加入願望清單</button>
+      <button class="coll" title="我已經有這張卡，加入收藏">📦 收藏</button>
       <a class="official" href="${esc(d.official_url)}" target="_blank" rel="noopener">官方卡表</a>
     </div>`;
 }
@@ -445,6 +462,7 @@ function ygoDetailHtml(d) {
       </table></div></div>` : ""}
     <div class="modal-actions">
       <button class="add">＋ 加入願望清單</button>
+      <button class="coll" title="我已經有這張卡，加入收藏">📦 收藏</button>
     </div>`;
 }
 
@@ -473,6 +491,7 @@ function pkmDetailHtml(d) {
       <ul class="variant-list" style="max-height:200px;overflow-y:auto">${variants}</ul></div>` : ""}
     <div class="modal-actions">
       <button class="add">＋ 加入願望清單</button>
+      <button class="coll" title="我已經有這張卡，加入收藏">📦 收藏</button>
       <a class="official" href="${esc(d.official_url)}" target="_blank" rel="noopener">官方詳細頁</a>
     </div>`;
 }
@@ -502,6 +521,17 @@ function bindModalActions(d) {
     renderWishlist();
     addBtn.disabled = true;
     addBtn.textContent = "已加入 ✓";
+  });
+  const collBtn = modal.querySelector(".coll");
+  if (collBtn) collBtn.addEventListener("click", async () => {
+    collBtn.disabled = true;
+    try {
+      await addToCollection(card);
+      collBtn.textContent = "已收藏 ✓";
+    } catch (err) {
+      alert("加入收藏失敗：" + err.message);
+      collBtn.disabled = false;
+    }
   });
   // 切換版本：寶可夢＝同名卡、鋼彈＝異圖（gcg 卡號是字串，不可 parseInt）
   modal.querySelectorAll("[data-vid]").forEach((a) =>
@@ -676,6 +706,7 @@ function renderWishlist() {
           <span class="wname"><span class="game-icon">${GAME_LABEL[c.game]}</span> <b>${esc(c.name)}</b></span>
           <input class="qty" type="number" min="1" max="9" value="${item.qty}">
           <button class="bell" title="設定到價通知">🔔</button>
+          <button class="got" title="已經買到了：移進收藏（沿用目前選的版本條件）">📦</button>
           <button class="rm" title="移除">✕</button>
         </div>
         <small>${subText}</small>
@@ -692,17 +723,33 @@ function renderWishlist() {
     const art = li.querySelector(".art");
     if (art) art.addEventListener("change", (e) => { item.art = e.target.value; saveWishlist(); });
     li.querySelector(".bell").addEventListener("click", (e) => addAlertFromWish(item, e.currentTarget));
+    // 買到了：整筆移進收藏並移出願望清單（版本條件跟著帶過去）
+    li.querySelector(".got").addEventListener("click", async (e) => {
+      const btn = e.currentTarget;
+      btn.disabled = true;
+      try {
+        await addToCollection(c, item, item.qty);
+        wishlist.delete(key);
+        renderWishlist();
+        document.querySelectorAll(`.card-item[data-key="${key}"] button.add`)
+          .forEach((b) => { b.disabled = false; b.textContent = "＋ 加入清單"; });
+      } catch (err) {
+        alert("加入收藏失敗：" + err.message);
+        btn.disabled = false;
+      }
+    });
     li.querySelector(".rm").addEventListener("click", () => {
       wishlist.delete(key);
       renderWishlist();
       // 原地把結果區同一張卡的「已加入」按鈕復原，不重置目前畫面
-      document.querySelectorAll(`.card-item[data-key="${key}"] button`)
+      document.querySelectorAll(`.card-item[data-key="${key}"] button.add`)
         .forEach((b) => { b.disabled = false; b.textContent = "＋ 加入清單"; });
     });
     ul.appendChild(li);
   }
   $("#wishCount").textContent = wishlist.size;
   $("#compareBtn").disabled = wishlist.size === 0;
+  updateDeductBtn();
 }
 
 // ---------- 比價 ----------
@@ -1146,3 +1193,173 @@ $("#alertCheckBtn").addEventListener("click", async () => {
 });
 
 loadAlerts();
+
+// ---------- 我的收藏 ----------
+// 「我已經有什麼」，與願望清單（我還缺什麼）互補。存後端（同 client_id），
+// 因為收藏是長期資料又帶成本價，放 localStorage 清瀏覽器就沒了。
+let collection = [];
+
+async function loadCollection() {
+  let data;
+  try {
+    const res = await alertFetch("/api/collection");
+    data = await res.json();
+  } catch (e) { return; }
+  collection = data.items || [];
+  renderCollection(data.summary || {});
+}
+
+// 加入收藏：card 為卡片物件，cond 帶願望清單那套版本條件（可省略）
+async function addToCollection(card, cond = {}, qty = 1) {
+  const res = await alertFetch("/api/collection", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      game: card.game, card_id: card.id, qty,
+      rarity: cond.rarity || null, lang: cond.lang || null, art: cond.art || null,
+    }),
+  });
+  const data = await res.json();
+  if (data.error) throw new Error(data.error);
+  await loadCollection();
+}
+
+function collCondText(it) {
+  return [it.rarity, it.lang, it.art].filter(Boolean).join("・");
+}
+
+function renderCollection(summary) {
+  const ul = $("#collectionList");
+  ul.innerHTML = "";
+  for (const it of collection) {
+    const li = document.createElement("li");
+    const cond = collCondText(it);
+    // 市值來自比價時存下的價格快照；沒查過這張卡就沒有數字，據實留白
+    const mkt = it.market_price == null ? "—"
+      : fmt(it.market_price) + (it.market_basis === "card" ? "＊" : "");
+    const gain = (it.unit_price != null && it.market_price != null)
+      ? (it.market_price - it.unit_price) * it.qty : null;
+    li.innerHTML = `
+      <img src="${it.image_url || ""}" alt="">
+      <div class="winfo">
+        <div class="wtop">
+          <span class="wname"><span class="game-icon">${GAME_LABEL[it.game]}</span>
+            <b>${esc(it.card_name || "")}</b></span>
+          <input class="qty" type="number" min="1" max="99" value="${it.qty}"
+                 title="持有張數">
+          <button class="rm" title="移除">✕</button>
+        </div>
+        <small>${esc(cond) || "未指定版本"}</small>
+        <div class="coll-money">
+          <label>成本 <input class="cost" type="number" min="0" placeholder="未記"
+                 value="${it.unit_price ?? ""}"></label>
+          <span class="coll-mkt">現價 ${mkt}</span>
+          ${gain == null ? "" :
+            `<span class="coll-gain ${gain >= 0 ? "up" : "down"}">${
+              gain >= 0 ? "▲" : "▼"} ${fmt(Math.abs(gain))}</span>`}
+        </div>
+      </div>`;
+    li.querySelector(".qty").addEventListener("change", (e) =>
+      updateCollection(it.id, { qty: parseInt(e.target.value) || 0 }));
+    li.querySelector(".cost").addEventListener("change", (e) =>
+      updateCollection(it.id, { unit_price: e.target.value.trim() || null }));
+    li.querySelector(".rm").addEventListener("click", async () => {
+      await alertFetch(`/api/collection/${it.id}`, { method: "DELETE" });
+      loadCollection();
+    });
+    ul.appendChild(li);
+  }
+  $("#collCount").textContent = collection.length;
+
+  const box = $("#collSummary");
+  if (!collection.length) {
+    box.hidden = true;
+  } else {
+    box.hidden = false;
+    const gain = summary.market - summary.cost;
+    // 只有部分收藏記了成本時，損益的基準不同，明講以免誤讀
+    const partial = summary.priced_qty && summary.priced_qty < summary.total_qty;
+    box.innerHTML = `
+      <span>${summary.kinds} 種・共 ${summary.total_qty} 張</span>
+      <span>成本 ${fmt(summary.cost)}</span>
+      <span>市值 ${fmt(summary.market)}</span>
+      ${summary.cost ? `<span class="coll-gain ${gain >= 0 ? "up" : "down"}">${
+        gain >= 0 ? "▲" : "▼"} ${fmt(Math.abs(gain))}</span>` : ""}
+      ${partial ? "<small>（僅部分收藏記了成本，損益不含未記的）</small>" : ""}
+      <small>市值取比價時存下的最低價快照，＊為不分版本的參考價；沒查過的卡不計入。</small>`;
+  }
+  updateDeductBtn();
+}
+
+function updateDeductBtn() {
+  const btn = $("#deductBtn");
+  if (btn) btn.disabled = !(collection.length && wishlist.size);
+}
+
+async function updateCollection(id, body) {
+  await alertFetch(`/api/collection/${id}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  loadCollection();
+}
+
+// 扣除已收藏：先向後端試算，再讓使用者確認才真的動清單
+$("#deductBtn").addEventListener("click", async () => {
+  if (!wishlist.size) return;
+  const entries = [...wishlist.entries()];
+  const out = $("#deductResult");
+  out.textContent = "計算中…";
+  let data;
+  try {
+    const res = await alertFetch("/api/collection/deduct", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        items: entries.map(([, it]) => ({
+          game: it.card.game, card_id: it.card.id, qty: it.qty,
+          rarity: it.rarity || null, lang: it.lang || null, art: it.art || null,
+        })),
+      }),
+    });
+    data = await res.json();
+  } catch (err) {
+    out.textContent = "計算失敗：" + err.message;
+    return;
+  }
+  if (!data.summary.qty) {
+    out.textContent = "願望清單裡沒有你已收藏的卡，不需扣除。";
+    return;
+  }
+  // 後端回傳順序與送出的 items 一致，直接用索引對回願望清單
+  const lines = data.items.map((r, i) => {
+    if (!r.owned) return null;
+    const it = entries[i][1];
+    return `・${it.card.name}：已有 ${r.owned}／需要 ${r.want}` +
+           (r.remaining ? `，還缺 ${r.remaining}` : "，已湊齊");
+  }).filter(Boolean);
+  if (!confirm(`將依「我的收藏」扣除以下張數：\n\n${lines.join("\n")}\n\n` +
+               `共扣 ${data.summary.qty} 張，湊齊的卡會從清單移除。要套用嗎？`)) {
+    out.textContent = "已取消。";
+    return;
+  }
+  let removed = 0, reduced = 0;
+  data.items.forEach((r, i) => {
+    if (!r.owned) return;
+    const [key, item] = entries[i];
+    if (r.remaining <= 0) { wishlist.delete(key); removed++; }
+    else { item.qty = r.remaining; reduced++; }
+  });
+  renderWishlist();
+  // 被移除的卡，把搜尋結果那顆「已加入」按鈕復原
+  document.querySelectorAll(".card-item").forEach((el) => {
+    if (!wishlist.has(el.dataset.key)) {
+      const b = el.querySelector("button.add");
+      if (b) { b.disabled = false; b.textContent = "＋ 加入清單"; }
+    }
+  });
+  out.textContent = `已扣除 ${data.summary.qty} 張：${removed} 種湊齊移除、${reduced} 種減量。`;
+});
+
+loadCollection();

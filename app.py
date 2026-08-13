@@ -1565,6 +1565,273 @@ def api_alerts_check():
     return jsonify({"running": True, "message": "開始檢查，稍候即可看到結果"})
 
 
+# ==================== 收藏庫存 ====================
+#
+# 願望清單是「我還缺什麼」，收藏是「我已經有什麼」。兩者合起來才是完整流程：
+# 匯入牌組 → 扣掉收藏裡已有的 → 只把真正缺的送去比價。
+# 沿用到價通知那套 client_id（X-Client-Id 標頭）做多人隔離。
+
+
+def _coll_cond(item):
+    """取版本條件三元組（空字串代表未指定）。"""
+    return ((item.get("rarity") or "").strip(),
+            (item.get("lang") or "").strip(),
+            (item.get("art") or "").strip())
+
+
+def _cond_match(want, have):
+    """單一條件是否相容：任一邊沒指定就不算衝突，兩邊都指定才需相等。
+
+    刻意寬鬆——使用者常常沒把收藏的稀有度填完整，嚴格比對會導致「明明有卡卻
+    扣不掉」。代價是條件標示不全時可能多扣，所以扣除結果一律列出扣了哪些讓人核對。
+    """
+    return not want or not have or want == have
+
+
+def _row_matches(want_cond, row):
+    have = (row["rarity"] or "", row["lang"] or "", row["art"] or "")
+    return all(_cond_match(w, h) for w, h in zip(want_cond, have))
+
+
+def _market_price(conn, game, card_id, rarity, lang):
+    """該卡最近一次的露天最低價快照。先找同條件，沒有再退回不分條件。
+
+    回傳 (價格, 依據)；依據為 'exact'（同版本條件）或 'card'（同卡不分條件）。
+    """
+    row = conn.execute(
+        "SELECT price FROM price_history WHERE game=? AND card_id=? "
+        "AND IFNULL(rarity,'')=IFNULL(?,'') AND IFNULL(lang,'')=IFNULL(?,'') "
+        "ORDER BY ts DESC LIMIT 1",
+        (game, str(card_id), rarity or None, lang or None)).fetchone()
+    if row:
+        return row["price"], "exact"
+    row = conn.execute(
+        "SELECT price FROM price_history WHERE game=? AND card_id=? "
+        "ORDER BY ts DESC LIMIT 1", (game, str(card_id))).fetchone()
+    return (row["price"], "card") if row else (None, None)
+
+
+@app.get("/api/collection")
+def api_collection_list():
+    """該訪客的收藏清單＋成本/市值統計。"""
+    cid = _client_id()
+    if not cid:
+        return jsonify({"items": [], "summary": {}})
+    conn = get_conn()
+    rows = [dict(r) for r in conn.execute(
+        "SELECT * FROM collections WHERE client_id=? "
+        "ORDER BY game, card_name, id", (cid,))]
+    kinds = len(rows)
+    total_qty = cost = market = 0
+    priced_qty = 0   # 有記成本的張數（損益只對這部分才有意義）
+    for it in rows:
+        total_qty += it["qty"]
+        price, basis = _market_price(
+            conn, it["game"], it["card_id"], it["rarity"], it["lang"])
+        it["market_price"] = price
+        it["market_basis"] = basis
+        if price is not None:
+            market += price * it["qty"]
+        if it["unit_price"] is not None:
+            cost += it["unit_price"] * it["qty"]
+            priced_qty += it["qty"]
+    conn.close()
+    return jsonify({
+        "items": rows,
+        "summary": {
+            "kinds": kinds, "total_qty": total_qty,
+            "cost": cost, "market": market, "priced_qty": priced_qty,
+        },
+    })
+
+
+@app.post("/api/collection")
+def api_collection_add():
+    """加入收藏：{game, card_id, qty?, rarity?, lang?, art?, unit_price?}
+
+    同卡同版本已存在時累加數量（qty 給負數即為扣減，歸零則刪除）。
+    """
+    cid = _client_id()
+    if not cid:
+        return jsonify({"error": "缺少訪客識別"}), 400
+    p = request.get_json(force=True)
+    game = p.get("game")
+    card_id = str(p.get("card_id") or "").strip()
+    if game not in ("pkm", "ygo", "gcg", "ga") or not card_id:
+        return jsonify({"error": "缺少卡片資訊"}), 400
+    try:
+        qty = int(p.get("qty", 1))
+    except (TypeError, ValueError):
+        return jsonify({"error": "數量需為數字"}), 400
+    if qty == 0:
+        return jsonify({"error": "數量不可為 0"}), 400
+    unit_price = p.get("unit_price")
+    if unit_price is not None:
+        try:
+            unit_price = int(unit_price)
+        except (TypeError, ValueError):
+            return jsonify({"error": "單價需為數字"}), 400
+        if unit_price < 0:
+            return jsonify({"error": "單價不可為負數"}), 400
+
+    rarity, lang, art = _coll_cond(p)
+    conn = get_conn()
+    name, image = _card_snapshot(conn, game, card_id)
+    if name is None:
+        conn.close()
+        return jsonify({"error": "找不到指定卡片"}), 400
+    row = conn.execute(
+        "SELECT id, qty FROM collections WHERE client_id=? AND game=? AND card_id=? "
+        "AND IFNULL(rarity,'')=? AND IFNULL(lang,'')=? AND IFNULL(art,'')=?",
+        (cid, game, card_id, rarity, lang, art)).fetchone()
+    if row:
+        new_qty = row["qty"] + qty
+        if new_qty <= 0:
+            conn.execute("DELETE FROM collections WHERE id=?", (row["id"],))
+        else:
+            # 單價只在有帶時覆寫，避免既有成本被預設值洗掉
+            if unit_price is None:
+                conn.execute(
+                    "UPDATE collections SET qty=?, "
+                    "updated_at=datetime('now','localtime') WHERE id=?",
+                    (new_qty, row["id"]))
+            else:
+                conn.execute(
+                    "UPDATE collections SET qty=?, unit_price=?, "
+                    "updated_at=datetime('now','localtime') WHERE id=?",
+                    (new_qty, unit_price, row["id"]))
+    elif qty > 0:
+        conn.execute(
+            "INSERT INTO collections (client_id, game, card_id, card_name, "
+            "image_url, rarity, lang, art, qty, unit_price) "
+            "VALUES (?,?,?,?,?,?,?,?,?,?)",
+            (cid, game, card_id, name, image, rarity or None, lang or None,
+             art or None, qty, unit_price))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/collection/<int:item_id>")
+def api_collection_update(item_id):
+    """更新收藏：改數量或購入單價。僅限本人的收藏。"""
+    cid = _client_id()
+    p = request.get_json(force=True)
+    conn = get_conn()
+    row = conn.execute(
+        "SELECT id FROM collections WHERE id=? AND client_id=?",
+        (item_id, cid)).fetchone()
+    if not row:
+        conn.close()
+        return jsonify({"error": "找不到收藏"}), 404
+    sets, params = [], []
+    if "qty" in p:
+        try:
+            qty = int(p["qty"])
+        except (TypeError, ValueError):
+            conn.close()
+            return jsonify({"error": "數量需為數字"}), 400
+        if qty <= 0:
+            conn.execute("DELETE FROM collections WHERE id=? AND client_id=?",
+                         (item_id, cid))
+            conn.commit()
+            conn.close()
+            return jsonify({"ok": True, "deleted": True})
+        sets.append("qty=?")
+        params.append(qty)
+    if "unit_price" in p:
+        v = p["unit_price"]
+        if v in (None, ""):
+            sets.append("unit_price=NULL")
+        else:
+            try:
+                v = int(v)
+            except (TypeError, ValueError):
+                conn.close()
+                return jsonify({"error": "單價需為數字"}), 400
+            if v < 0:
+                conn.close()
+                return jsonify({"error": "單價不可為負數"}), 400
+            sets.append("unit_price=?")
+            params.append(v)
+    if not sets:
+        conn.close()
+        return jsonify({"error": "無可更新欄位"}), 400
+    sets.append("updated_at=datetime('now','localtime')")
+    conn.execute(
+        f"UPDATE collections SET {','.join(sets)} WHERE id=? AND client_id=?",
+        params + [item_id, cid])
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
+
+
+@app.delete("/api/collection/<int:item_id>")
+def api_collection_delete(item_id):
+    cid = _client_id()
+    conn = get_conn()
+    conn.execute("DELETE FROM collections WHERE id=? AND client_id=?",
+                 (item_id, cid))
+    conn.commit()
+    conn.close()
+    return jsonify({"ok": True})
+
+
+@app.post("/api/collection/deduct")
+def api_collection_deduct():
+    """扣除已收藏：傳願望清單，回報每張卡已有幾張、還缺幾張。
+
+    {items: [{game, card_id, qty, rarity?, lang?, art?}]}
+    只計算不寫入——是否真的改清單由前端決定，這樣使用者能先看再套用。
+    """
+    cid = _client_id()
+    p = request.get_json(force=True)
+    items = p.get("items") or []
+    if not cid or not items:
+        return jsonify({"items": [], "summary": {"kinds": 0, "qty": 0}})
+
+    conn = get_conn()
+    rows = conn.execute(
+        "SELECT * FROM collections WHERE client_id=?", (cid,)).fetchall()
+    conn.close()
+
+    # 同一張收藏可能同時符合多個願望項目（例如條件寬鬆時），
+    # 用剩餘量逐項扣，先到先得，避免同一張卡被重複計算。
+    remaining = {r["id"]: r["qty"] for r in rows}
+    out, kinds, total = [], 0, 0
+    for it in items:
+        game = it.get("game")
+        card_id = str(it.get("card_id") or "").strip()
+        try:
+            want = max(1, int(it.get("qty") or 1))
+        except (TypeError, ValueError):
+            want = 1
+        cond = _coll_cond(it)
+        owned, used = 0, []
+        for r in rows:
+            if owned >= want:
+                break
+            if r["game"] != game or str(r["card_id"]) != card_id:
+                continue
+            if not _row_matches(cond, r) or remaining[r["id"]] <= 0:
+                continue
+            take = min(want - owned, remaining[r["id"]])
+            remaining[r["id"]] -= take
+            owned += take
+            used.append({
+                "id": r["id"], "qty": take,
+                "rarity": r["rarity"], "lang": r["lang"], "art": r["art"],
+            })
+        if owned:
+            kinds += 1
+            total += owned
+        out.append({
+            "game": game, "card_id": card_id, "want": want,
+            "owned": owned, "remaining": want - owned, "matched": used,
+        })
+    return jsonify({"items": out, "summary": {"kinds": kinds, "qty": total}})
+
+
 if __name__ == "__main__":
     # 綁 0.0.0.0：同一內網（區域網路）的其他電腦也能連
     # （用本機 IP:5000 開啟）。純內網自用，非對外公開網站。
